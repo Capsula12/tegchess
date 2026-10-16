@@ -7,10 +7,11 @@ from typing import Any
 from tegchess.config import Config
 
 
-def scope_cte(cfg: Config, player: str, color: str | None = None) -> tuple[str, list[Any]]:
-    """CTE `scope` con las partidas del jugador según el config (modalidad, fechas, max_games).
+def scope_cte(cfg: Config, player: str, color: str | None = None, name: str = "scope") -> tuple[str, list[Any]]:
+    """CTE `scope` (o `name`) con las partidas del jugador según el config (modalidad, fechas, max_games).
 
     Columnas: las de player_games (game_id, color, player, opponent, score, ...).
+    Con `name` distinto se pueden combinar los alcances de dos jugadores en una consulta.
     """
     dl = cfg.download
     where = ["player = ?", "variant = 'standard'"]
@@ -32,12 +33,12 @@ def scope_cte(cfg: Config, player: str, color: str | None = None) -> tuple[str, 
         color_filter = "WHERE color = ?"
         params.append(color)
     sql = f"""
-    scope_all AS (
+    {name}_all AS (
         SELECT * FROM player_games
         WHERE {' AND '.join(where)}
         ORDER BY created_at DESC
         {limit}
     ),
-    scope AS (SELECT * FROM scope_all {color_filter})
+    {name} AS (SELECT * FROM {name}_all {color_filter})
     """
     return sql, params

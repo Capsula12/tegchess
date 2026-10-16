@@ -9,7 +9,6 @@ Orden de preferencia para cada posición pendiente:
 
 from __future__ import annotations
 
-import json
 import logging
 import queue
 import threading
@@ -79,7 +78,7 @@ def _row(epd: str, cp: int | None, mate: int | None, pv: list[str], depth: int |
         "pv": " ".join(pv) if pv else None,
         "depth": depth,
         "source": source,
-        "lines": json.dumps(lines) if lines else None,
+        "lines": lines or None,  # bulk_insert lo serializa a la columna JSON
     }
 
 
