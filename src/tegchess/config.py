@@ -54,7 +54,7 @@ class Config(BaseModel):
 
     @property
     def data_path(self) -> Path:
-        p = Path(self.data_dir)
+        p = Path(self.data_dir).expanduser()
         return p if p.is_absolute() else PROJECT_ROOT / p
 
     @property
@@ -74,15 +74,23 @@ class Config(BaseModel):
         return list(seen)
 
 
+def config_path() -> Path:
+    """config.yaml (o el indicado en TEGCHESS_CONFIG); si no existe, el de ejemplo."""
+    env = os.environ.get("TEGCHESS_CONFIG")
+    if env:
+        return Path(env)
+    return DEFAULT_CONFIG if DEFAULT_CONFIG.exists() else EXAMPLE_CONFIG
+
+
 def load_config(path: Path | None = None) -> Config:
-    path = path or (DEFAULT_CONFIG if DEFAULT_CONFIG.exists() else EXAMPLE_CONFIG)
+    path = path or config_path()
     with open(path, encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
     return Config.model_validate(raw)
 
 
 def save_config(cfg: Config, path: Path | None = None) -> None:
-    path = path or DEFAULT_CONFIG
+    path = path or Path(os.environ.get("TEGCHESS_CONFIG") or DEFAULT_CONFIG)
     data = cfg.model_dump(mode="json")
     with open(path, "w", encoding="utf-8") as f:
         yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
