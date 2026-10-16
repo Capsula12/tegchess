@@ -55,6 +55,9 @@ Para probar sin tocar los datos del usuario: apuntar `TEGCHESS_CONFIG` a un yaml
   umbrales 5/10/15 = imprecisión/error/error grave.
 - **Lichess**: sin `User-Agent` propio, `/api/games/user` responde **404**. El opening explorer
   (`explorer.lichess.org`) exige token (401 sin él); cloud-eval no.
+- **Cloud-eval** es para "unas pocas posiciones": miles de pedidos seguidos terminan en 429. Por eso se piden
+  solo las posiciones más repetidas, con tope y pausa (`engine.cloud_eval_*`), y ante un 429 se corta y
+  sigue Stockfish (`RateLimited`). Las descargas de partidas sí esperan 65 s ante un 429.
 - En el JSON de partidas, `clocks[i]` es el reloj de quien movió tras el ply `i+1`, y `analysis[i]` es la
   evaluación tras el ply `i+1`. Las evaluaciones de Lichess no traen mejor jugada salvo en errores:
   `engine.ensure_best_moves` la completa para las posiciones que muestra el informe.

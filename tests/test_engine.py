@@ -44,3 +44,25 @@ def test_stockfish_finds_mate_in_one(con):
     best, mate = con.execute("SELECT best_uci, mate FROM evals").fetchone()
     assert best == "h5f7"
     assert mate == 1
+
+
+def test_cloud_evals_stops_on_rate_limit():
+    from tegchess.engine import cloud_evals
+    from tegchess.lichess import RateLimited
+
+    class FakeClient:
+        calls = 0
+
+        def cloud_eval(self, fen, multi_pv=1):
+            self.calls += 1
+            if self.calls > 2:
+                raise RateLimited("429")
+            return {"depth": 30, "pvs": [{"moves": "e2e4 e7e5", "cp": 20}]}
+
+    client = FakeClient()
+    epds = [chess.Board().epd()] * 5
+    rows = list(cloud_evals(client, epds))
+    # Corta en el primer 429 sin esperar ni reintentar: el resto queda para Stockfish.
+    assert len(rows) == 2
+    assert client.calls == 3
+    assert rows[0]["best_uci"] == "e2e4" and rows[0]["source"] == "cloud"

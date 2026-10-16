@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import queue
 import threading
+import time
 from collections.abc import Callable, Iterator
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from contextlib import contextmanager
@@ -23,7 +24,7 @@ import duckdb
 
 from tegchess import db
 from tegchess.config import Config, find_stockfish
-from tegchess.lichess import LichessClient
+from tegchess.lichess import LichessClient, RateLimited
 
 log = logging.getLogger(__name__)
 
@@ -95,9 +96,16 @@ def _score_fields(score: chess.engine.PovScore) -> tuple[int | None, int | None]
 
 
 def cloud_evals(client: LichessClient, positions: list[str], on_done: Callable[[], None] = lambda: None,
-                multi_pv: int = 1) -> Iterator[dict[str, Any]]:
-    for epd in positions:
-        data = client.cloud_eval(epd_to_fen(epd), multi_pv=multi_pv)
+                multi_pv: int = 1, delay_s: float = 0.0) -> Iterator[dict[str, Any]]:
+    """Pide evaluaciones a la nube de a una. Si Lichess limita (429), corta: el resto va a Stockfish."""
+    for i, epd in enumerate(positions):
+        if i and delay_s:
+            time.sleep(delay_s)
+        try:
+            data = client.cloud_eval(epd_to_fen(epd), multi_pv=multi_pv)
+        except RateLimited:
+            log.warning("Lichess limitó la nube tras %d pedidos; las posiciones restantes van a Stockfish.", i)
+            return
         on_done()
         if not data or not data.get("pvs"):
             continue
@@ -264,11 +272,12 @@ def evaluate_pending(
     # 2) Nube de Lichess para posiciones de apertura repetidas.
     if ecfg.use_cloud_eval and client is not None:
         cloud_pending = [epd for epd, _ in pending_positions(
-            con, ecfg.max_ply, min_count=cfg.analysis.min_occurrences, ply_cap=ecfg.cloud_eval_max_ply)]
+            con, ecfg.max_ply, min_count=max(ecfg.cloud_eval_min_count, 2), ply_cap=ecfg.cloud_eval_max_ply,
+        )][:ecfg.cloud_eval_max_positions]
         if cloud_pending:
             tick = progress("Nube de Lichess", len(cloud_pending))
             batch: list[dict[str, Any]] = []
-            for row in cloud_evals(client, cloud_pending, on_done=tick):
+            for row in cloud_evals(client, cloud_pending, on_done=tick, delay_s=ecfg.cloud_eval_delay_s):
                 batch.append(row)
                 if len(batch) >= WRITE_BATCH:
                     db.bulk_insert(con, "evals", batch)

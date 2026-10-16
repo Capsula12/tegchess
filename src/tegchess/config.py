@@ -32,6 +32,10 @@ class EngineConfig(BaseModel):
     max_ply: int = 30
     use_cloud_eval: bool = True
     cloud_eval_max_ply: int = 16
+    # La nube de Lichess es para "unas pocas posiciones": se piden solo las más repetidas y con tope.
+    cloud_eval_min_count: int = 5
+    cloud_eval_max_positions: int = 300
+    cloud_eval_delay_s: float = 0.3
 
     def resolved_workers(self) -> int:
         if self.workers:

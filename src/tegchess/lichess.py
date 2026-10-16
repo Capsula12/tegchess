@@ -104,8 +104,12 @@ class LichessClient:
         yield from self._stream_ndjson(url, params)
 
     def cloud_eval(self, fen: str, multi_pv: int = 1) -> dict[str, Any] | None:
-        """Evaluación en la nube de Lichess, o None si la posición no está."""
-        resp = self._request("GET", f"{BASE_URL}/api/cloud-eval", params={"fen": fen, "multiPv": multi_pv})
+        """Evaluación en la nube de Lichess, o None si la posición no está.
+
+        Ante 429 lanza RateLimited en vez de esperar: la nube es opcional y conviene seguir con Stockfish.
+        """
+        resp = self._request("GET", f"{BASE_URL}/api/cloud-eval", params={"fen": fen, "multiPv": multi_pv},
+                             wait_on_429=False)
         if resp.status_code == 404:
             return None
         resp.raise_for_status()
@@ -113,7 +117,7 @@ class LichessClient:
 
     # --- internos -----------------------------------------------------
 
-    def _request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+    def _request(self, method: str, url: str, wait_on_429: bool = True, **kwargs: Any) -> httpx.Response:
         for attempt in range(1, MAX_RETRIES + 1):
             try:
                 resp = self._http.request(method, url, **kwargs)
@@ -123,6 +127,8 @@ class LichessClient:
                 time.sleep(wait)
                 continue
             if resp.status_code == 429:
+                if not wait_on_429:
+                    raise RateLimited(url)
                 log.warning("Lichess pidió esperar (429). Pausa de %ss...", RATE_LIMIT_WAIT_S)
                 time.sleep(RATE_LIMIT_WAIT_S)
                 continue
@@ -167,3 +173,7 @@ class LichessClient:
 
 class StreamInterrupted(LichessError):
     pass
+
+
+class RateLimited(LichessError):
+    """Lichess respondió 429 y el llamador prefirió no esperar."""

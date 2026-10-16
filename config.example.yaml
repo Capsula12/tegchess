@@ -22,6 +22,9 @@ engine:
   max_ply: 30                  # analizar solo los primeros N plies (apertura). 0 = partida completa
   use_cloud_eval: true         # pedir evaluaciones a la nube de Lichess para posiciones de apertura
   cloud_eval_max_ply: 16
+  cloud_eval_min_count: 5      # solo posiciones que aparecen al menos N veces
+  cloud_eval_max_positions: 300  # tope de pedidos por corrida (el resto lo hace Stockfish)
+  cloud_eval_delay_s: 0.3      # pausa entre pedidos
 
 analysis:
   min_occurrences: 3           # veces que una posición tiene que repetirse para considerarla

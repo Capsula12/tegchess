@@ -46,6 +46,12 @@ Preguntas del enunciado original y cobertura:
 5. Etapa 2 (no empezada): práctica con repetición espaciada sobre las posiciones de `repeated_positions`
    y desvíos de repertorio; actualización automática al detectar partidas nuevas.
 
+## Para revisar
+
+- En la primera corrida real, algunos jugadores bajaron un poco más que `max_games` (540 y 510 con tope 500),
+  en un único tramo continuo y sin duplicados. Revisar `ingest.sync_user` (cálculo de `remaining` tras una
+  reanudación) con la base del usuario. No afecta los resultados: solo entran unas partidas más viejas de más.
+
 ## Decisiones tomadas
 
 - DuckDB como única base, con la lógica de métricas en SQL (macros + vistas) para reutilizarla.
