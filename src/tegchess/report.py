@@ -16,7 +16,7 @@ from tegchess.analysis.openings import opening_summary, repeated_positions, repe
 from tegchess.analysis.scope import scope_cte
 from tegchess.config import PROJECT_ROOT, Config
 from tegchess.db import fetch_dicts
-from tegchess.engine import epd_to_fen
+from tegchess.engine import ensure_best_moves, epd_to_fen
 
 WEB_DIR = PROJECT_ROOT / "web"
 COLORS = ("white", "black")
@@ -87,8 +87,13 @@ def _san(epd: str, uci: str | None) -> str | None:
 def weak_positions(con: duckdb.DuckDBPyConnection, cfg: Config, player: str, limit: int = 25) -> list[dict[str, Any]]:
     """Posiciones repetidas del jugador con su jugada habitual vs. la del motor, y la línea para llegar."""
     out = []
-    for r in repeated_positions(con, cfg, player, limit=limit):
-        if not r["avg_wp_loss"]:
+    rows = repeated_positions(con, cfg, player, limit=limit)
+    # Las evaluaciones de Lichess no traen la mejor jugada: se completan con Stockfish.
+    if ensure_best_moves(con, cfg, [r["epd"] for r in rows if not r["best_uci"]]):
+        rows = repeated_positions(con, cfg, player, limit=limit)
+    for r in rows:
+        # Sin pérdida, o su jugada habitual ya es la del motor y pierde poco: no es una debilidad.
+        if (r["avg_wp_loss"] or 0) < 2 or (r["usual_uci"] == r["best_uci"] and r["avg_wp_loss"] < 5):
             continue
         sample = r["sample_games"][0]
         ply = con.execute(

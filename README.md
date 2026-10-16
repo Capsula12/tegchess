@@ -33,6 +33,18 @@ tegchess report            :: genera los informes JSON + HTML estático en data/
 tegchess serve             :: levanta la interfaz web
 ```
 
+Desde la interfaz (`run.bat`) se puede editar la configuración y lanzar los mismos pasos con los
+botones **Descargar**, **Analizar**, **Generar informes** o **Todo**. El botón **PDF** imprime el
+informe (elegí "Guardar como PDF"). `tegchess report` también deja una versión estática en
+`data/export/index.html` que se abre con doble clic, sin servidor.
+
+### Cuánto tarda el análisis
+
+Cada posición se evalúa una sola vez (caché por posición) y se aprovechan las evaluaciones que ya trae
+Lichess. Como referencia, ~7.600 posiciones nuevas a profundidad 16 tardaron ~15 minutos con 6 procesos.
+Para ir más rápido: bajar `engine.depth` (14 alcanza para aperturas de blitz), subir `engine.workers` o
+reducir `engine.max_ply`. El análisis se puede cortar con Ctrl+C y retomar: lo evaluado queda guardado.
+
 ## Token de Lichess (opcional)
 
 Un token personal (https://lichess.org/account/oauth/token, **sin permisos especiales**) acelera la

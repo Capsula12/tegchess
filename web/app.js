@@ -244,7 +244,7 @@
     const items = list.map((w, i) => `
       <div class="weak" data-i="${i}">
         <div class="head">
-          <span><b>${esc(w.opening || "Posición")}</b> · ${colorName(w.color)} juegan · ply ${w.ply}</span>
+          <span><b>${esc(w.opening || "Posición")}</b> · jugada ${Math.ceil(w.ply / 2)} de las ${colorName(w.color)}</span>
           <span class="badge bad">−${fmt(w.avg_wp_loss, 1)} pts % victoria</span>
         </div>
         <div>Llega ${w.occurrences} veces · suele jugar <b>${esc(w.usual_san)}</b> (${w.usual_count}×, CPL ${fmt(w.usual_cpl)})

@@ -16,7 +16,7 @@ download:
 engine:
   path: null                   # null = buscar "stockfish" en el PATH y en la carpeta de winget
   depth: 16
-  workers: null                # null = núcleos / 2
+  workers: null                # null = núcleos - 2
   threads_per_worker: 1
   hash_mb: 64
   max_ply: 30                  # analizar solo los primeros N plies (apertura). 0 = partida completa

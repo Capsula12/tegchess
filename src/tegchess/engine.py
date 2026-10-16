@@ -206,6 +206,33 @@ def analyse_positions(
     return done
 
 
+def ensure_best_moves(con: duckdb.DuckDBPyConnection, cfg: Config, epds: list[str], multipv: int = 1) -> int:
+    """Garantiza mejor jugada (y multipv) en posiciones puntuales, p.ej. las del informe.
+
+    Las evaluaciones que vienen de Lichess no traen la mejor jugada: esas se recalculan.
+    Devuelve cuántas posiciones analizó; 0 si no hay Stockfish.
+    """
+    if not epds:
+        return 0
+    cond = "best_uci IS NULL" + (" OR lines IS NULL" if multipv > 1 else "")
+    placeholders = ",".join("?" for _ in epds)
+    have = {r[0] for r in con.execute(
+        f"SELECT epd FROM evals WHERE epd IN ({placeholders}) AND NOT ({cond}) AND source <> 'terminal'", epds
+    ).fetchall()}
+    terminal = {r[0] for r in con.execute(
+        f"SELECT epd FROM evals WHERE epd IN ({placeholders}) AND source = 'terminal'", epds).fetchall()}
+    todo = [e for e in dict.fromkeys(epds) if e not in have and e not in terminal]
+    path = find_stockfish(cfg.engine.path)
+    if not todo or not path:
+        return 0
+    pool = EnginePool(path, min(cfg.engine.resolved_workers(), len(todo)), cfg.engine.threads_per_worker,
+                      cfg.engine.hash_mb)
+    try:
+        return analyse_positions(con, pool, todo, cfg.engine.depth, multipv=multipv, replace=True)
+    finally:
+        pool.close()
+
+
 def evaluate_pending(
     con: duckdb.DuckDBPyConnection,
     cfg: Config,

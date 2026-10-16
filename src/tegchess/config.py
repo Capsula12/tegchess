@@ -36,7 +36,7 @@ class EngineConfig(BaseModel):
     def resolved_workers(self) -> int:
         if self.workers:
             return self.workers
-        return max(1, (os.cpu_count() or 2) // 2)
+        return max(1, (os.cpu_count() or 2) - 2)
 
 
 class AnalysisConfig(BaseModel):

@@ -17,3 +17,6 @@ stockfish*/
 stockfish*.exe
 stockfish*.zip
 tools/
+
+# Configuración local de herramientas
+.claude/launch.json
