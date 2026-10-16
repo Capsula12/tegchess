@@ -1,13 +1,16 @@
-"""Línea de comandos: tegchess fetch | analyze | report | serve."""
+"""Línea de comandos: tegchess fetch | analyze | report | export | serve."""
 
 from __future__ import annotations
 
 import logging
 import sys
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 
 import typer
 from rich.console import Console
 from rich.logging import RichHandler
+from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeElapsedColumn
 
 from tegchess.config import find_stockfish, lichess_token, load_config
 
@@ -30,36 +33,100 @@ def main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Logging de
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
+@contextmanager
+def rich_progress() -> Iterator[Callable[[str, int | None], Callable[[], None]]]:
+    with Progress(
+        TextColumn("{task.description}"), BarColumn(), MofNCompleteColumn(), TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+
+        def make(desc: str, total: int | None) -> Callable[[], None]:
+            task = progress.add_task(desc, total=total)
+            return lambda: progress.advance(task)
+
+        yield make
+
+
 @app.command()
 def fetch(
     users: list[str] = typer.Argument(None, help="Usuarios a descargar (por defecto: yo + rivales del config)"),
 ) -> None:
     """Descarga (incremental) las partidas a DuckDB."""
-    from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
-
-    from tegchess import db
-    from tegchess.ingest import sync_user
-    from tegchess.lichess import LichessClient, LichessError
+    from tegchess.pipeline import fetch_all
 
     cfg = load_config()
-    users = users or cfg.players()
-    if not users:
+    if not (users or cfg.players()):
         console.print("[red]No hay usuarios: completá 'me' y 'opponents' en config.yaml[/]")
         raise typer.Exit(1)
-    con = db.connect(cfg.db_path)
-    with LichessClient(lichess_token()) as client, Progress(
-        SpinnerColumn(), TextColumn("{task.description}"), TextColumn("{task.completed} partidas"),
-        TimeElapsedColumn(), console=console,
-    ) as progress:
-        for user in users:
-            task = progress.add_task(f"Descargando {user}", total=None)
-            try:
-                n = sync_user(client, con, cfg, user, on_game=lambda: progress.advance(task))
-            except LichessError as e:
-                progress.update(task, description=f"[red]{user}: {e}[/]")
-                continue
-            progress.update(task, description=f"[green]{user}[/]: {n} nuevas")
-    con.close()
+    with rich_progress() as progress:
+        result = fetch_all(cfg, users, progress)
+    for user, n in result.items():
+        console.print(f"  {user}: " + (f"{n} partidas nuevas" if isinstance(n, int) else f"[red]{n}[/]"))
+
+
+@app.command()
+def analyze(
+    depth: int = typer.Option(None, help="Profundidad de Stockfish (por defecto la del config)"),
+    max_ply: int = typer.Option(None, help="Analizar hasta este ply (0 = partida completa)"),
+    no_cloud: bool = typer.Option(False, "--no-cloud", help="No usar la nube de Lichess"),
+) -> None:
+    """Evalúa las posiciones pendientes (Lichess, nube de Lichess y Stockfish)."""
+    from tegchess.pipeline import analyze as run_analyze
+
+    cfg = load_config()
+    if depth is not None:
+        cfg.engine.depth = depth
+    if max_ply is not None:
+        cfg.engine.max_ply = max_ply
+    if no_cloud:
+        cfg.engine.use_cloud_eval = False
+    try:
+        with rich_progress() as progress:
+            stats = run_analyze(cfg, progress)
+    except KeyboardInterrupt:
+        console.print("[yellow]Interrumpido: lo evaluado hasta ahora quedó guardado.[/]")
+        raise typer.Exit(130)
+    console.print(
+        f"Evaluadas: {stats['stockfish']} con Stockfish, {stats['cloud']} desde la nube, "
+        f"{stats['terminal']} terminales."
+    )
+
+
+@app.command()
+def report(
+    rivals: list[str] = typer.Argument(None, help="Rivales (por defecto: los del config)"),
+    export: bool = typer.Option(True, help="Exportar también el HTML estático"),
+) -> None:
+    """Genera los informes JSON (data/reports) y el HTML estático (data/export)."""
+    from tegchess.pipeline import build_reports, export_html
+
+    cfg = load_config()
+    with rich_progress() as progress:
+        paths = build_reports(cfg, rivals, progress)
+    for p in paths:
+        console.print(f"  {p}")
+    if export:
+        console.print(f"HTML estático: {export_html(cfg)}")
+
+
+@app.command()
+def serve(
+    port: int = typer.Option(8765, help="Puerto local"),
+    no_browser: bool = typer.Option(False, "--no-browser", help="No abrir el navegador"),
+) -> None:
+    """Levanta la interfaz web en http://127.0.0.1:PUERTO."""
+    import threading
+    import webbrowser
+
+    import uvicorn
+
+    from tegchess.server import create_app
+
+    url = f"http://127.0.0.1:{port}"
+    console.print(f"Interfaz en [bold]{url}[/] (Ctrl+C para salir)")
+    if not no_browser:
+        threading.Timer(1.0, lambda: webbrowser.open(url)).start()
+    uvicorn.run(create_app(), host="127.0.0.1", port=port, log_level="warning")
 
 
 @app.command()

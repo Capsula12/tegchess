@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>tegchess · preparación de rivales</title>
+  <link rel="stylesheet" href="vendor/chessground.base.css">
+  <link rel="stylesheet" href="vendor/chessground.brown.css">
+  <link rel="stylesheet" href="vendor/chessground.cburnett.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">tegchess</div>
+    <label class="rival-picker">Rival
+      <select id="rival-select"></select>
+    </label>
+    <div class="spacer"></div>
+    <div class="actions server-only">
+      <button data-job="fetch" title="Descargar partidas nuevas de Lichess">Descargar</button>
+      <button data-job="analyze" title="Evaluar posiciones con Stockfish">Analizar</button>
+      <button data-job="report" title="Generar informes y HTML estático">Generar informes</button>
+      <button data-job="all" class="primary" title="Descargar, analizar y generar">Todo</button>
+    </div>
+    <button id="print-btn" title="Imprimir o guardar como PDF">PDF</button>
+  </header>
+
+  <div id="job-status" class="job-status hidden"></div>
+
+  <main class="layout">
+    <section class="content">
+      <nav class="tabs" id="tabs">
+        <button data-tab="summary" class="active">Resumen</button>
+        <button data-tab="openings">Aperturas</button>
+        <button data-tab="tree">Explorador</button>
+        <button data-tab="weak">Posiciones flojas</button>
+        <button data-tab="config" class="server-only">Configuración</button>
+      </nav>
+
+      <div id="empty" class="empty hidden">
+        <h2>Todavía no hay informes</h2>
+        <p>Completá tu usuario y los rivales en <b>Configuración</b> y apretá <b>Todo</b>
+          (descarga, análisis e informe). Desde la consola: <code>tegchess fetch</code>,
+          <code>tegchess analyze</code>, <code>tegchess report</code>.</p>
+      </div>
+
+      <div class="tab" id="tab-summary"></div>
+      <div class="tab hidden" id="tab-openings"></div>
+      <div class="tab hidden" id="tab-tree"></div>
+      <div class="tab hidden" id="tab-weak"></div>
+      <div class="tab hidden server-only" id="tab-config"></div>
+    </section>
+
+    <aside class="board-panel">
+      <div id="board" class="cg-wrap"></div>
+      <div class="board-controls">
+        <button data-nav="first" title="Inicio">⏮</button>
+        <button data-nav="prev" title="Anterior (←)">◀</button>
+        <button data-nav="next" title="Siguiente (→)">▶</button>
+        <button data-nav="last" title="Final">⏭</button>
+        <button data-nav="flip" title="Girar tablero">⇅</button>
+      </div>
+      <div id="board-caption" class="board-caption"></div>
+      <div id="move-list" class="move-list"></div>
+      <div class="legend">
+        <span><i class="dot red"></i>jugada habitual</span>
+        <span><i class="dot green"></i>mejor según el motor</span>
+      </div>
+    </aside>
+  </main>
+
+  <script src="vendor/chessground.global.js"></script>
+  <script src="static-data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
