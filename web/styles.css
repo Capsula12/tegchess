@@ -118,6 +118,15 @@ tr.clickable:hover td { background: var(--surface-2); }
 .weak .line { color: var(--muted); font-size: 12px; margin-top: 4px; }
 .badge { display: inline-block; padding: 1px 6px; border-radius: 10px; font-size: 12px; background: var(--surface-2); }
 .badge.bad { background: color-mix(in srgb, var(--bad) 20%, transparent); color: var(--bad); }
+.badge.good { background: color-mix(in srgb, var(--good) 20%, transparent); color: var(--good); }
+.badge.warn { background: color-mix(in srgb, var(--warn) 22%, transparent); color: var(--warn); }
+
+.plan-list { display: grid; gap: 6px; margin-bottom: 8px; }
+.plan-item { display: flex; gap: 10px; align-items: baseline; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 8px 12px; line-height: 1.45; }
+.plan-item .badge { flex: none; min-width: 72px; text-align: center; }
+.plan-item.clickable { cursor: pointer; }
+.plan-item.clickable:hover, .plan-item.active { border-color: var(--accent); }
 
 .board-panel { position: sticky; top: 64px; align-self: start; overflow: hidden; }
 #board { width: 100%; aspect-ratio: 1 / 1; }

@@ -149,7 +149,8 @@
   }
 
   function planHtml() {
-    // Primer borrador del plan: aperturas donde el rival puntúa peor y posiciones donde más pierde.
+    // Sin mi usuario no hay cruce: ideas a partir de las debilidades del rival solamente.
+    if (report().plan) return `<p class="muted">El plan concreto contra este rival está en la pestaña <b>Plan de partida</b>.</p>`;
     const r = report().rival;
     const items = [];
     ["white", "black"].forEach((c) => {
@@ -161,6 +162,121 @@
       `(pierde ${fmt(w.avg_wp_loss, 1)} pts de % de victoria; el motor prefiere <b>${esc(w.best_san || "–")}</b>).`));
     if (!items.length) return "";
     return `<h3>Ideas para la partida (borrador)</h3><ul>${items.map((i) => `<li>${i}</li>`).join("")}</ul>`;
+  }
+
+  // ---------------------------------------------------------------- Plan de partida
+  const KIND = {
+    apertura: ["Apertura", ""], linea: ["Línea", "good"], trampa: ["Trampa", "good"],
+    evitar: ["Evitar", "bad"], reforzar: ["Reforzar", "warn"],
+  };
+
+  function showItem(item, color, caption) {
+    setLine(item.line || [], { idx: item.idx ?? null, shapes: item.shapes || null, orientation: color, caption });
+  }
+
+  function battleRows(list, color) {
+    return list.map((b, i) => {
+      const opt = (b.options || [])[0];
+      const move = b.to_move === "me"
+        ? (opt ? `vos: <b>${esc(opt.san)}</b> <span class="muted">(${fmt(opt.expected_pct)}%)</span>` : "vos")
+        : `él: <b>${esc(b.usual_san || "–")}</b>`;
+      return `<tr class="clickable" data-i="${i}">
+        <td>${esc(b.opening || "–")} <span class="muted">jug. ${Math.ceil(b.ply / 2)}</span></td>
+        <td>${move}</td>
+        <td>${b.my_games} · ${fmt(b.my_score_pct)}%</td>
+        <td>${b.rival_games} · ${fmt(b.rival_score_pct)}%</td>
+        <td>${b.eval_for_me === null ? "–" : fmt(b.eval_for_me / 100, 2)}</td>
+        <td class="${pctClass(b.expected_pct)}">${fmt(b.expected_pct)}%</td></tr>`;
+    });
+  }
+
+  function renderPlan() {
+    const root = $("#tab-plan");
+    const r = report();
+    if (!r.plan) {
+      root.innerHTML = `<p class="muted">Para cruzar repertorios completá tu usuario (<b>me</b>) en la configuración y regenerá el informe.</p>`;
+      return;
+    }
+    const color = state.planColor || "white";
+    const m = r.matchup[color];
+    const items = r.plan[color];
+    const opp = colorName(color === "white" ? "black" : "white");
+    const famRows = m.families.map((f) => `<tr>
+        <td>${esc(f.opening)} <span class="muted">${esc(f.eco || "")}</span>${f.reinforce ? ' <span class="badge warn">reforzar</span>' : ""}</td>
+        <td>${f.my_games} · ${fmt(f.my_score_pct)}%</td><td>${f.rival_games} · ${fmt(f.rival_score_pct)}%</td>
+        <td>${fmt(f.my_cpl)} / ${fmt(f.rival_cpl)}</td>
+        <td class="${pctClass(f.expected_pct)}">${fmt(f.expected_pct)}%</td></tr>`);
+    const bHeaders = ["Posición", "Le toca", "Vos (partidas · %)", "Él (partidas · %)", "Eval.", "Esperado"];
+    root.innerHTML = `
+      <div class="toolbar">${seg("pc", [["white", "Yo con blancas"], ["black", "Yo con negras"]], color)}</div>
+      <p class="muted">Vos con ${colorName(color)} contra ${esc(r.meta.rival)} con ${opp}. Esperado = 40% tu puntaje +
+        40% (100 − el de él) + 20% motor, suavizado cuando hay pocas partidas. Hacé clic para ver la línea en el tablero.</p>
+      <div class="plan-list">${items.map((it, i) => `
+        <div class="plan-item${it.line ? " clickable" : ""}" data-i="${i}">
+          <span class="badge ${KIND[it.kind]?.[1] || ""}">${KIND[it.kind]?.[0] || esc(it.kind)}</span>
+          <span>${esc(it.text)}</span>
+        </div>`).join("") || '<p class="muted">Sin recomendaciones: faltan partidas en común o evaluaciones.</p>'}</div>
+      <h3>Aperturas que juegan los dos</h3>
+      ${table(["Apertura", "Vos (partidas · %)", `Él con ${opp}`, "CPL vos / él", "Esperado"], famRows)}
+      <h3>Posiciones favorables</h3>
+      <div data-battles="favorable">${table(bHeaders, battleRows(m.favorable, color))}</div>
+      <h3>Posiciones a evitar</h3>
+      <div data-battles="danger">${table(bHeaders, battleRows(m.danger, color))}</div>`;
+    bindSeg(root, "pc", (v) => { state.planColor = v; renderPlan(); });
+    $$(".plan-item.clickable", root).forEach((el) => el.addEventListener("click", () => {
+      $$(".plan-item", root).forEach((x) => x.classList.remove("active"));
+      el.classList.add("active");
+      const it = items[+el.dataset.i];
+      showItem(it, color, KIND[it.kind]?.[0] || "");
+    }));
+    $$("[data-battles]", root).forEach((box) => {
+      const list = m[box.dataset.battles];
+      $$("tr[data-i]", box).forEach((tr) => tr.addEventListener("click", () => {
+        const b = list[+tr.dataset.i];
+        const opt = (b.options || [])[0];
+        const shapes = b.to_move === "me" && opt ? [{ orig: opt.uci.slice(0, 2), dest: opt.uci.slice(2, 4), brush: "green" }] : null;
+        showItem({ line: b.line, shapes }, color, `${b.opening || ""} · esperado ${fmt(b.expected_pct)}%`);
+      }));
+    });
+  }
+
+  // ---------------------------------------------------------------- Trampas
+  function renderTraps() {
+    const root = $("#tab-traps");
+    const all = report().rival.traps || [];
+    const onlyMine = !!state.trapsMine && !!report().me;
+    const list = onlyMine ? all.filter((t) => t.in_my_repertoire) : all;
+    const items = list.map((t, i) => `
+      <div class="weak" data-i="${i}">
+        <div class="head">
+          <span><b>${esc(t.opening || "Posición")}</b> · jugada ${Math.ceil(t.ply / 2)} de las ${colorName(t.rival_color)}</span>
+          <span>
+            ${t.in_my_repertoire ? `<span class="badge good">en tu repertorio (${t.my_games})</span>` : ""}
+            <span class="badge ${t.difficulty === "fácil" ? "good" : "warn"}">refutación ${esc(t.difficulty)}</span>
+            <span class="badge bad">−${fmt(t.usual_wp_loss, 1)} pts</span>
+          </span>
+        </div>
+        <div>Juega <b>${esc(t.usual_san)}</b> ${t.usual_count} de ${t.occurrences} veces (mejor: ${esc(t.best_san || "–")}).
+          Castigo: <b>${esc(t.refutation_san)}</b>${t.refutation_line ? ` <span class="muted">${esc(t.refutation_line)}</span>` : ""}</div>
+        <div class="line">Sus rivales encontraron la refutación ${t.refutation_found} de ${t.games_after_mistake} veces ·
+          él hizo ${fmt(t.rival_score_pct)}% (castigado: ${fmt(t.rival_score_when_punished_pct)}%, sin castigo: ${fmt(t.rival_score_when_missed_pct)}%)
+          ${t.forcing ? " · refutación forzante (captura o jaque)" : ""}</div>
+      </div>`);
+    root.innerHTML = `
+      <div class="toolbar">${report().me ? seg("tm", [["all", "Todas"], ["mine", "Solo en mi repertorio"]], onlyMine ? "mine" : "all") : ""}</div>
+      <p class="muted">Posiciones que ${esc(report().meta.rival)} repite donde su jugada habitual es un error según el motor.
+        "Fácil": la refutación es forzante o hay varias jugadas que ganan; "precisa": hay una sola. Clic: el tablero muestra
+        la posición tras su error con la refutación en verde (→ para seguir la variante).</p>
+      <div class="weak-list">${items.join("") || '<p class="muted">No se encontraron trampas con los datos actuales.</p>'}</div>`;
+    bindSeg(root, "tm", (v) => { state.trapsMine = v === "mine"; renderTraps(); });
+    $$(".weak", root).forEach((el) => el.addEventListener("click", () => {
+      $$(".weak", root).forEach((x) => x.classList.remove("active"));
+      el.classList.add("active");
+      const t = list[+el.dataset.i];
+      showItem({ line: t.line, idx: t.line_mistake_index,
+        shapes: [{ orig: t.refutation_uci.slice(0, 2), dest: t.refutation_uci.slice(2, 4), brush: "green" }] },
+        t.punisher_color, `Trampa: ${t.opening || ""}`);
+    }));
   }
 
   // ---------------------------------------------------------------- Aperturas
@@ -370,7 +486,7 @@
     if (state.tab === "config") return renderConfig();
     $$(".tab").forEach((t) => { if (!hasReport && t.id !== "tab-config") t.innerHTML = ""; });
     if (!hasReport) return;
-    ({ summary: renderSummary, openings: renderOpenings, tree: renderTree, weak: renderWeak })[state.tab]();
+    ({ summary: renderSummary, plan: renderPlan, traps: renderTraps, openings: renderOpenings, tree: renderTree, weak: renderWeak })[state.tab]();
   }
 
   async function loadReports() {
@@ -398,7 +514,7 @@
   $$("[data-job]").forEach((b) => b.addEventListener("click", () => startJob(b.dataset.job)));
   $("#print-btn").addEventListener("click", () => {
     // Para el PDF se imprimen todas las secciones (renderizadas) una tras otra.
-    if (report()) { renderSummary(); renderOpenings(); renderWeak(); }
+    if (report()) { renderSummary(); renderPlan(); renderTraps(); renderOpenings(); renderWeak(); }
     window.print();
   });
 

@@ -38,6 +38,18 @@ botones **Descargar**, **Analizar**, **Generar informes** o **Todo**. El botón 
 informe (elegí "Guardar como PDF"). `tegchess report` también deja una versión estática en
 `data/export/index.html` que se abre con doble clic, sin servidor.
 
+### Qué tiene el informe
+
+- **Plan de partida** (con blancas y con negras): escenarios de apertura favorables, líneas concretas,
+  trampas a buscar, posiciones a evitar y qué reforzar. Cada punto se puede ver en el tablero.
+  Combina tus resultados, los del rival y el motor en un *puntaje esperado*:
+  `40% tu puntaje + 40% (100 − el de él) + 20% motor`, suavizado hacia 50% cuando hay pocas partidas.
+  Las posiciones se comparan por FEN, así que las transposiciones cuentan.
+- **Trampas**: posiciones que el rival repite donde su jugada habitual es un error según Stockfish,
+  con la refutación, si es fácil (forzante o con varias jugadas que ganan) o precisa, y cuántas
+  veces sus rivales la encontraron.
+- **Aperturas**, **Explorador** (árbol de repertorio) y **Posiciones flojas**, del rival y tuyas.
+
 ### Cuánto tarda el análisis
 
 Cada posición se evalúa una sola vez (caché por posición) y se aprovechan las evaluaciones que ya trae

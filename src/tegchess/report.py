@@ -8,11 +8,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import chess
 import duckdb
 
 from tegchess import __version__
+from tegchess.analysis.crossover import (
+    attach_lines,
+    battle_positions,
+    family_matchup,
+    reinforce_positions,
+    select_battles,
+)
+from tegchess.analysis.lines import line_to, san
 from tegchess.analysis.openings import opening_summary, repeated_positions, repertoire_tree
+from tegchess.analysis.traps import find_traps
 from tegchess.analysis.scope import scope_cte
 from tegchess.config import PROJECT_ROOT, Config
 from tegchess.db import fetch_dicts
@@ -61,29 +69,6 @@ def profile(con: duckdb.DuckDBPyConnection, cfg: Config, player: str) -> dict[st
     return {"summary": summary, "by_color": by_color, "by_perf": by_perf, "endings": endings}
 
 
-def _line_to(con: duckdb.DuckDBPyConnection, game_id: str, ply: int) -> list[dict[str, str]]:
-    """Jugadas hasta la posición (sin incluir el ply), con el FEN tras cada una para el tablero."""
-    rows = con.execute(
-        "SELECT san, uci FROM moves WHERE game_id = ? AND ply < ? ORDER BY ply", [game_id, ply]
-    ).fetchall()
-    board = chess.Board()
-    line = []
-    for san, uci in rows:
-        board.push_uci(uci)
-        line.append({"san": san, "uci": uci, "fen": board.fen()})
-    return line
-
-
-def _san(epd: str, uci: str | None) -> str | None:
-    if not uci:
-        return None
-    board = chess.Board(epd_to_fen(epd))
-    try:
-        return board.san(chess.Move.from_uci(uci))
-    except (ValueError, AssertionError):
-        return None
-
-
 def weak_positions(con: duckdb.DuckDBPyConnection, cfg: Config, player: str, limit: int = 25) -> list[dict[str, Any]]:
     """Posiciones repetidas del jugador con su jugada habitual vs. la del motor, y la línea para llegar."""
     out = []
@@ -102,8 +87,8 @@ def weak_positions(con: duckdb.DuckDBPyConnection, cfg: Config, player: str, lim
         out.append({
             **r,
             "fen": epd_to_fen(r["epd"]),
-            "best_san": _san(r["epd"], r["best_uci"]),
-            "line": _line_to(con, sample, ply),
+            "best_san": san(r["epd"], r["best_uci"]),
+            "line": line_to(con, sample, ply),
             "eval_for_player": None if r["eval_cp"] is None
             else (r["eval_cp"] if r["color"] == "white" else -r["eval_cp"]),
         })
@@ -121,9 +106,108 @@ def player_section(con: duckdb.DuckDBPyConnection, cfg: Config, player: str) -> 
     }
 
 
+def matchup_section(con: duckdb.DuckDBPyConnection, cfg: Config, me: str, rival: str,
+                    my_color: str) -> dict[str, Any]:
+    """Cruce de mi repertorio (con my_color) contra el del rival (con el color contrario)."""
+    battles = select_battles(battle_positions(con, cfg, me, rival, my_color))
+    for group in battles.values():
+        attach_lines(con, group)
+    reinforce = reinforce_positions(con, cfg, me, rival, my_color)
+    if ensure_best_moves(con, cfg, [r["epd"] for r in reinforce if not r["best_uci"]]):
+        reinforce = reinforce_positions(con, cfg, me, rival, my_color)
+    attach_lines(con, reinforce)
+    return {
+        "families": family_matchup(con, cfg, me, rival, my_color),
+        "favorable": battles["favorable"],
+        "danger": battles["danger"],
+        "reinforce": reinforce,
+    }
+
+
+def _arrow(uci: str | None, brush: str) -> list[dict[str, str]]:
+    return [{"orig": uci[:2], "dest": uci[2:4], "brush": brush}] if uci else []
+
+
+def _games(n: int) -> str:
+    return f"{n} partida" if n == 1 else f"{n} partidas"
+
+
+def _where(item: dict[str, Any], capital: bool = True) -> str:
+    prefix = "En" if capital else "en"
+    return f"{prefix} {item['opening']}" if item.get("opening") else f"{prefix} esta posición"
+
+
+def build_plan(matchup: dict[str, Any], traps: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """Recomendaciones concretas por color. Cada una puede traer línea y flechas para el tablero."""
+    plan: dict[str, list[dict[str, Any]]] = {}
+    for color in COLORS:
+        m = matchup[color]
+        opp = "negras" if color == "white" else "blancas"
+        items: list[dict[str, Any]] = []
+
+        fams = [f for f in m["families"] if f["my_games"] >= 3 and f["rival_games"] >= 2]
+        for i, f in enumerate(fams[:2]):
+            label = "Escenario más favorable" if i == 0 else "Otro escenario favorable"
+            items.append({"kind": "apertura", "text":
+                f"{label}: {f['opening']}. Vos {f['my_score_pct']:.0f}% en {_games(f['my_games'])}; "
+                f"él {f['rival_score_pct']:.0f}% con {opp} en {_games(f['rival_games'])} "
+                f"(esperado {f['expected_pct']:.0f}%)."})
+
+        for bt in m["favorable"][:3]:
+            opts = bt.get("options") or []
+            if bt["to_move"] == "me" and opts:
+                o = opts[0]
+                rival_part = (f"él hace {o['rival_score_pct']:.0f}% después de {o['san']} ({_games(o['rival_games'])})"
+                              if o["rival_games"] else "él todavía no enfrentó esa jugada")
+                text = (f"{_where(bt)}, jugá {o['san']}: vos {o['my_score_pct']:.0f}% en {_games(o['my_games'])}; "
+                        f"{rival_part}.")
+                shapes = _arrow(o["uci"], "green")
+            else:
+                usual = f" Ahí él suele jugar {bt['usual_san']}." if bt.get("usual_san") else ""
+                text = (f"{_where(bt)}: llevá la partida a esta posición (esperado {bt['expected_pct']:.0f}%). "
+                        f"Vos {bt['my_score_pct']:.0f}% en {_games(bt['my_games'])}, él "
+                        f"{bt['rival_score_pct']:.0f}% en {_games(bt['rival_games'])}.{usual}")
+                shapes = []
+            items.append({"kind": "linea", "text": text, "line": bt["line"], "shapes": shapes})
+
+        for t in [t for t in traps if t["punisher_color"] == color][:3]:
+            where = "en tu repertorio" if t["in_my_repertoire"] else "fuera de tu repertorio habitual"
+            punished = (f" Sus rivales lo castigaron {t['refutation_found']} de {t['games_after_mistake']} veces"
+                        f" y él igual hizo {t['rival_score_pct']:.0f}%." if t["games_after_mistake"] else "")
+            items.append({"kind": "trampa", "text":
+                f"Trampa ({where}, refutación {t['difficulty']}): {_where(t, capital=False)} juega {t['usual_san']} "
+                f"{t['usual_count']} de {t['occurrences']} veces. Castigalo con {t['refutation_san']}"
+                + (f" ({t['refutation_line']})." if t["refutation_line"] else ".") + punished,
+                "line": t["line"], "idx": t["line_mistake_index"], "shapes": _arrow(t["refutation_uci"], "green")})
+
+        for bt in m["danger"][:2]:
+            items.append({"kind": "evitar", "text":
+                f"{_where(bt)}: evitá esta posición (esperado {bt['expected_pct']:.0f}%). Vos "
+                f"{bt['my_score_pct']:.0f}% en {_games(bt['my_games'])}, él {bt['rival_score_pct']:.0f}% en "
+                f"{_games(bt['rival_games'])}.",
+                "line": bt["line"], "shapes": []})
+
+        for r in m["reinforce"][:2]:
+            items.append({"kind": "reforzar", "text":
+                f"Reforzá: {_where(r, capital=False)} solés jugar {r['usual_san']} "
+                f"(pierde {r['avg_wp_loss']:.0f} puntos de % de victoria); el motor prefiere {r['best_san'] or '–'}. "
+                f"Él llega a esta posición en {_games(r['rival_games'])}.",
+                "line": r["line"], "shapes": _arrow(r["usual_uci"], "red") + _arrow(r["best_uci"], "green")})
+        for f in [f for f in m["families"] if f["reinforce"]][:2]:
+            items.append({"kind": "reforzar", "text":
+                f"Reforzá {f['opening']}: tu pérdida media en la apertura es {f['my_cpl']:.0f} cp y la de él "
+                f"{f['rival_cpl']:.0f} cp."})
+        plan[color] = items
+    return plan
+
+
 def build_report(con: duckdb.DuckDBPyConnection, cfg: Config, rival: str) -> dict[str, Any]:
     rival = rival.lower()
     me = cfg.me.lower() if cfg.me else None
+    has_me = bool(me and me != rival)
+    rival_section = player_section(con, cfg, rival)
+    rival_section["traps"] = find_traps(con, cfg, rival, me if has_me else None)
+    matchup = {c: matchup_section(con, cfg, me, rival, c) for c in COLORS} if has_me else None
     eval_coverage = con.execute(f"""
         SELECT count(*) FILTER (WHERE e.epd IS NOT NULL), count(*)
         FROM moves m LEFT JOIN evals e ON e.epd = m.epd_after
@@ -144,8 +228,10 @@ def build_report(con: duckdb.DuckDBPyConnection, cfg: Config, rival: str) -> dic
             "analysed_plies": cfg.engine.max_ply,
             "eval_coverage_pct": round(100 * eval_coverage[0] / eval_coverage[1], 1) if eval_coverage[1] else 0,
         },
-        "rival": player_section(con, cfg, rival),
-        "me": player_section(con, cfg, me) if me and me != rival else None,
+        "rival": rival_section,
+        "me": player_section(con, cfg, me) if has_me else None,
+        "matchup": matchup,
+        "plan": build_plan(matchup, rival_section["traps"]) if matchup else None,
     }
 
 
