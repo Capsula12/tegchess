@@ -67,6 +67,24 @@ Guardalo en un archivo `.env` en la raíz del repo (está en `.gitignore`):
 LICHESS_TOKEN=lip_xxxxxxxxxxxx
 ```
 
+## Llevarlo a otra computadora
+
+Se puede copiar la carpeta entera (por ejemplo a un pendrive) y seguir en otra PC:
+
+- **Cerrá la interfaz antes de copiar** (ventana de `run.bat`): mientras está procesando, la base
+  `data/tegchess.duckdb` puede estar a medio escribir.
+- Se llevan los datos (`data/`: partidas, evaluaciones e informes), tu `config.yaml`, el `.env` con el token
+  y el historial de git con los commits (la carpeta oculta `.git`).
+- El entorno `.venv` **no** es portable (guarda rutas de Python de esta PC). No hace falta copiarlo:
+  si está y no funciona, `run.bat` lo detecta y lo recrea solo. Para eso, la otra PC necesita Python 3.11+
+  (python.org, con "Add to PATH") e internet la primera vez.
+- Stockfish no viaja con el repo: instalalo allá con `winget install Stockfish.Stockfish`. Si en
+  `config.yaml` pusiste una ruta fija en `engine.path`, volvé a `null` para que lo detecte solo.
+- `run.bat` muestra al arrancar qué detectó (usuarios, Stockfish, token).
+
+Para seguir desarrollando con Claude Code en otra PC, [CLAUDE.md](CLAUDE.md) y [docs/ESTADO.md](docs/ESTADO.md)
+tienen el contexto, las convenciones y los próximos pasos.
+
 ## Estructura
 
 ```
