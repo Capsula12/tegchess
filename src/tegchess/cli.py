@@ -63,6 +63,35 @@ def fetch(
 
 
 @app.command()
+def openings(
+    user: str = typer.Argument(..., help="Usuario de Lichess"),
+    color: str = typer.Option("white", "--color", "-c", help="white | black"),
+    detail: bool = typer.Option(False, "--detail", "-d", help="Agrupar por variante y no por familia"),
+    top: int = typer.Option(15, help="Cantidad de filas"),
+) -> None:
+    """Resumen de aperturas de un jugador con resultados y pérdida media."""
+    from rich.table import Table
+
+    from tegchess import db
+    from tegchess.analysis.openings import opening_summary
+
+    cfg = load_config()
+    con = db.connect(cfg.db_path, read_only=True)
+    rows = opening_summary(con, cfg, user, color, by="name" if detail else "family")
+    con.close()
+    table = Table(title=f"{user} con {'blancas' if color == 'white' else 'negras'}")
+    for col in ("Apertura", "ECO", "Partidas", "G-T-P", "% puntos", "Elo rival", "CPL apertura"):
+        table.add_column(col, justify="left" if col == "Apertura" else "right")
+    for r in rows[:top]:
+        table.add_row(
+            r["opening"], r["eco"] or "", str(r["games"]), f"{r['wins']}-{r['draws']}-{r['losses']}",
+            f"{r['score_pct']:.0f}", f"{r['avg_opp_rating'] or 0:.0f}",
+            "" if r["avg_cpl"] is None else f"{r['avg_cpl']:.0f} ({r['games_with_evals']})",
+        )
+    console.print(table)
+
+
+@app.command()
 def doctor() -> None:
     """Muestra la configuración detectada (usuarios, Stockfish, token)."""
     cfg = load_config()

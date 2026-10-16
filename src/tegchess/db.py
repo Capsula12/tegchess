@@ -13,6 +13,7 @@ import json
 import os
 import tempfile
 from collections.abc import Iterable, Sequence
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -112,12 +113,12 @@ CREATE OR REPLACE MACRO win_pct(cp) AS
 CREATE OR REPLACE VIEW player_games AS
 SELECT g.*, g.id AS game_id, 'white' AS color, g.white AS player, g.black AS opponent,
        g.white_rating AS rating, g.black_rating AS opp_rating, g.white_accuracy AS accuracy,
-       CASE g.winner WHEN 'white' THEN 1.0 WHEN 'black' THEN 0.0 ELSE 0.5 END AS score
+       CAST(CASE g.winner WHEN 'white' THEN 1 WHEN 'black' THEN 0 ELSE 0.5 END AS DOUBLE) AS score
 FROM games g
 UNION ALL
 SELECT g.*, g.id AS game_id, 'black' AS color, g.black AS player, g.white AS opponent,
        g.black_rating AS rating, g.white_rating AS opp_rating, g.black_accuracy AS accuracy,
-       CASE g.winner WHEN 'black' THEN 1.0 WHEN 'white' THEN 0.0 ELSE 0.5 END AS score
+       CAST(CASE g.winner WHEN 'black' THEN 1 WHEN 'white' THEN 0 ELSE 0.5 END AS DOUBLE) AS score
 FROM games g;
 
 CREATE OR REPLACE VIEW move_quality AS
@@ -213,4 +214,5 @@ def bulk_insert(
 def fetch_dicts(con: duckdb.DuckDBPyConnection, sql: str, params: Sequence[Any] | None = None) -> list[dict[str, Any]]:
     cur = con.execute(sql, params or [])
     names = [d[0] for d in cur.description]
-    return [dict(zip(names, row)) for row in cur.fetchall()]
+    return [{n: float(v) if isinstance(v, Decimal) else v for n, v in zip(names, row)}
+            for row in cur.fetchall()]
