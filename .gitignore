@@ -1,0 +1,19 @@
+# Entorno
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Secretos y config local
+.env
+config.yaml
+
+# Datos generados (partidas, DuckDB, informes)
+data/
+
+# Binarios de Stockfish
+stockfish*/
+stockfish*.exe
+stockfish*.zip
+tools/

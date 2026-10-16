@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tegchess"
+version = "0.1.0"
+description = "Preparación de rivales de ajedrez con la API de Lichess y Stockfish"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "chess>=1.10",
+    "duckdb>=1.1",
+    "fastapi>=0.110",
+    "httpx>=0.27",
+    "pydantic>=2.5",
+    "pyyaml>=6.0",
+    "rich>=13.0",
+    "typer>=0.12",
+    "uvicorn>=0.29",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+tegchess = "tegchess.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

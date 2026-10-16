@@ -1,0 +1,30 @@
+# Copiá este archivo a config.yaml y editalo (config.yaml no se sube al repo).
+# También se puede editar desde la interfaz web.
+
+me: tu_usuario
+opponents:
+  - rival1
+  - rival2
+
+download:
+  perf_types: [blitz, rapid]   # bullet, blitz, rapid, classical, correspondence
+  max_games: 500               # máximo de partidas por jugador (las más recientes)
+  since: 2025-01-01            # opcional, AAAA-MM-DD
+  until: null                  # opcional, AAAA-MM-DD
+  rated_only: true
+
+engine:
+  path: null                   # null = buscar "stockfish" en el PATH y en la carpeta de winget
+  depth: 16
+  workers: null                # null = núcleos / 2
+  threads_per_worker: 1
+  hash_mb: 64
+  max_ply: 30                  # analizar solo los primeros N plies (apertura). 0 = partida completa
+  use_cloud_eval: true         # pedir evaluaciones a la nube de Lichess para posiciones de apertura
+  cloud_eval_max_ply: 16
+
+analysis:
+  min_occurrences: 3           # veces que una posición tiene que repetirse para considerarla
+  opening_depth_plies: 12      # profundidad del árbol de repertorio
+
+data_dir: data
