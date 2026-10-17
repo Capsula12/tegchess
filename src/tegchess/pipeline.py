@@ -55,10 +55,11 @@ def build_reports(cfg: Config, rivals: list[str] | None = None, progress: Progre
     rivals = [r.lower() for r in (rivals or cfg.opponents)]
     tick = progress("Generando informes", len(rivals))
     paths = []
+    cache: dict = {}   # mi sección es la misma en todos los informes
     con = db.connect(cfg.db_path)
     try:
         for rival in rivals:
-            paths.append(write_report(build_report(con, cfg, rival), cfg.reports_path))
+            paths.append(write_report(build_report(con, cfg, rival, cache), cfg.reports_path))
             tick()
     finally:
         con.close()

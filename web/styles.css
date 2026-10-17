@@ -176,6 +176,19 @@ tr.clickable:hover td { background: rgba(255, 255, 255, .08); }
 .hint { background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 14%, var(--surface)), var(--surface));
   border-radius: var(--radius); padding: 12px 16px; line-height: 1.5; border-left: 3px solid var(--accent); }
 
+/* Expectativa por Elo y áreas de "Mi juego". */
+.expect { display: flex; gap: 18px; align-items: center; background: linear-gradient(90deg, color-mix(in srgb, var(--info) 16%, var(--surface)), var(--surface));
+  border-radius: var(--radius); padding: 14px 18px; margin-top: 16px; line-height: 1.5; }
+.expect-num { font-size: 40px; font-weight: 800; letter-spacing: -1px; color: var(--info); flex: none; }
+.hero-expect { display: inline-block; background: rgba(0, 0, 0, .28); border-radius: 999px; padding: 2px 10px; margin-bottom: 4px; }
+.area { background: var(--surface); border-radius: var(--radius); padding: 4px 18px 16px; margin-top: 12px; }
+.area-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.area .findings { margin: 4px 0 8px; padding-left: 18px; line-height: 1.55; }
+.area .tips { background: var(--surface-2); border-radius: var(--radius); padding: 8px 14px; margin-bottom: 10px; }
+.area .tips ul { margin: 4px 0 0; padding-left: 18px; line-height: 1.5; }
+.area .table-wrap { background: var(--surface-2); }
+.card.prio .value { color: var(--bad); }
+
 /* Barras de reloj restante (rival vs. yo). */
 .bars { background: var(--surface); border-radius: var(--radius); padding: 14px 16px; display: grid; gap: 10px; }
 .bar-row { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 12px; align-items: center; }
@@ -287,8 +300,9 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
   .tab { display: block !important; break-inside: auto; }
   .tab + .tab { break-before: page; }
   .tab[id="tab-tree"], .tab[id="tab-config"] { display: none !important; }
-  .table-wrap, .card, .weak, .plan-item, .bars, .hint { border: 1px solid var(--border); }
-  .weak, .plan-item, .card, tr, .hint { break-inside: avoid; }
+  .table-wrap, .card, .weak, .plan-item, .bars, .hint, .area, .expect { border: 1px solid var(--border); }
+  .weak, .plan-item, .card, tr, .hint, .expect { break-inside: avoid; }
+  .hero-expect { background: none; padding: 0; }
   .table-wrap { overflow: visible; }
   .hint { background: #f3faf6; }
   .tab::before { content: attr(data-title); display: block; font-size: 20px; font-weight: 800; margin: 14px 0 4px; }

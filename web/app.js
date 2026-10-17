@@ -108,6 +108,11 @@
   function bindSeg(root, name, fn) {
     $$(`[data-seg="${name}"] button`, root).forEach((b) => b.addEventListener("click", () => fn(b.dataset.v)));
   }
+  const sgn = (v, d = 0) => (v === null || v === undefined ? "–" : (v > 0 ? "+" : "") + fmt(v, d));
+  const evalTxt = (cp) => (cp === null || cp === undefined ? "–" : sgn(cp / 100, 2));
+  const confBadge = (c) => (c ? `<span class="badge ${c === "baja" ? "warn" : c === "alta" ? "good" : ""}" title="Confianza según la cantidad de partidas">${c}</span>` : "");
+  const ciTitle = (x) => (x ? ` title="Intervalo de 90%: ${x[0]}–${x[1]}%"` : "");
+  const lowSample = (n) => (n < 10 ? ' <span class="badge warn" title="Con menos de 10 partidas el porcentaje es poco confiable">poca muestra</span>' : "");
   const report = () => state.reports[state.rival];
   const section = (who) => (who === "me" ? report().me : report().rival);
   const RNAME = () => report().meta.rival_name || report().meta.rival;
@@ -132,6 +137,7 @@
         ${card("Jugadas por partida", fmt(s.avg_moves))}
         ${card("Precisión media", s.avg_accuracy ? fmt(s.avg_accuracy) + "%" : "–")}
       </div>
+      ${strengthHtml(r)}
       <h3>Resultados por color</h3>
       ${table(["", "Partidas", "G / T / P", "Puntaje"], color)}
       <h3>Por modalidad</h3>
@@ -139,6 +145,31 @@
       <h3>Cómo terminan sus partidas</h3>
       ${table(["Final", "Ganadas", "Tablas", "Perdidas"], endings)}
       ${planHtml()}`;
+  }
+
+  function strengthHtml(r) {
+    const st = r.rival.profile.strength;
+    if (!st || !st.overall) return "";
+    const row = (label, x) => (x ? `<tr><td>${label}</td><td>${x.games}</td><td>${fmt(x.score_pct)}%</td>
+      <td>${fmt(x.expected_pct)}%</td><td class="${x.over_pct >= 3 ? "pct-good" : x.over_pct <= -3 ? "pct-bad" : ""}">${sgn(x.over_pct)}</td>
+      <td>${fmt(x.avg_opp_rating)}</td></tr>` : "");
+    const rows = [row("General", st.overall)]
+      .concat(st.by_color.map((x) => row(`Con ${colorName(x.key)}`, x)))
+      .concat(st.by_perf.map((x) => row(esc(x.key), x)))
+      .concat([row("Últimas 30 partidas", st.form.recent), row("Antes", st.form.before)]);
+    const b = r.base;
+    const baseCard = b ? `<div class="expect">
+        <div class="expect-num">${fmt(b.expected_pct)}%</div>
+        <div><b>Tu expectativa por Elo</b> contra ${esc(RNAME())} en ${esc(b.perf)}: vos ${b.my_rating}, él ${b.rival_rating}
+          (${sgn(b.gap)}). De cada 10 partidas, unos ${fmt(b.expected_pct / 10, 1)} puntos para vos.
+          ${b.big_gap ? "<br><b>La diferencia es grande</b>: el plan apunta a mejorar tus chances, sobre todo con la apertura." : ""}
+          <div class="muted">Él rinde ${sgn(b.rival_over_pct)} puntos sobre su Elo; vos, ${sgn(b.my_over_pct)}.</div></div>
+      </div>` : "";
+    return `${baseCard}
+      <h3>Rendimiento sobre el Elo</h3>
+      <p class="muted">Puntaje real contra el esperado por los ratings de cada partida: dice si rinde más o menos que su
+        rating (positivo = rinde de más). Es más justo que el porcentaje bruto porque descuenta la fuerza de los rivales.</p>
+      ${table(["", "Partidas", "Puntaje", "Esperado por Elo", "Diferencia", "Elo rival medio"], rows)}`;
   }
 
   function endingName(status) {
@@ -164,8 +195,8 @@
 
   // ---------------------------------------------------------------- Plan de partida
   const KIND = {
-    tiempo: ["Tiempo", "info"], apertura: ["Apertura", ""], linea: ["Línea", "good"], trampa: ["Trampa", "good"],
-    evitar: ["Evitar", "bad"], reforzar: ["Reforzar", "warn"],
+    base: ["Base", "info"], tiempo: ["Tiempo", "info"], preparar: ["Preparar", "good"], apertura: ["Apertura", ""],
+    linea: ["Línea", "good"], trampa: ["Trampa", "good"], evitar: ["Evitar", "bad"], reforzar: ["Reforzar", "warn"],
   };
 
   function showItem(item, color, caption) {
@@ -181,10 +212,12 @@
       return `<tr class="clickable" data-i="${i}">
         <td>${esc(b.opening || "–")} <span class="muted">jug. ${Math.ceil(b.ply / 2)}</span></td>
         <td>${move}</td>
-        <td>${b.my_games} · ${fmt(b.my_score_pct)}%</td>
-        <td>${b.rival_games} · ${fmt(b.rival_score_pct)}%</td>
-        <td>${b.eval_for_me === null ? "–" : fmt(b.eval_for_me / 100, 2)}</td>
-        <td class="${pctClass(b.expected_pct)}">${fmt(b.expected_pct)}%</td></tr>`;
+        <td${ciTitle(b.my_ci)}>${b.my_games} · ${fmt(b.my_score_pct)}%</td>
+        <td${ciTitle(b.rival_ci)}>${b.rival_games} · ${fmt(b.rival_score_pct)}%</td>
+        <td>${fmt(b.rival_reach_pct)}%</td>
+        <td>${evalTxt(b.eval_for_me)}</td>
+        <td><b>${fmt(b.expected_pct)}%</b> <span class="muted">(${sgn(b.delta_pct)})</span></td>
+        <td>${confBadge(b.confidence)}</td></tr>`;
     });
   }
 
@@ -196,30 +229,36 @@
       return;
     }
     const color = state.planColor || "white";
-    const m = r.matchup[color];
+    const m = r.matchup ? r.matchup[color] : null;
     const items = r.plan[color];
     const opp = colorName(color === "white" ? "black" : "white");
-    const famRows = m.families.map((f) => `<tr>
+    const famRows = m ? m.families.map((f) => `<tr>
         <td>${esc(f.opening)} <span class="muted">${esc(f.eco || "")}</span>${f.reinforce ? ' <span class="badge warn">reforzar</span>' : ""}</td>
-        <td>${f.my_games} · ${fmt(f.my_score_pct)}%</td><td>${f.rival_games} · ${fmt(f.rival_score_pct)}%</td>
-        <td>${fmt(f.my_cpl)} / ${fmt(f.rival_cpl)}</td>
-        <td class="${pctClass(f.expected_pct)}">${fmt(f.expected_pct)}%</td></tr>`);
-    const bHeaders = ["Posición", "Le toca", "Vos (partidas · %)", "Él (partidas · %)", "Eval.", "Esperado"];
+        <td${ciTitle(f.my_ci)}>${f.my_games} · ${fmt(f.my_score_pct)}% <span class="muted">(${sgn(f.my_over_pct)})</span></td>
+        <td${ciTitle(f.rival_ci)}>${f.rival_games} · ${fmt(f.rival_score_pct)}% <span class="muted">(${sgn(f.rival_over_pct)})</span></td>
+        <td>${evalTxt(f.my_eval_out)} / ${evalTxt(f.rival_eval_out)}</td>
+        <td><b>${fmt(f.expected_pct)}%</b> <span class="muted">(${sgn(f.delta_pct)})</span></td>
+        <td>${confBadge(f.confidence)}</td></tr>`) : [];
+    const bHeaders = ["Posición", "Le toca", "Vos (partidas · %)", "Él (partidas · %)", "Él llega", "Eval.", "Esperado (vs. Elo)", "Confianza"];
+    const baseTxt = r.base ? `${fmt(r.base.expected_pct)}%` : "50%";
     root.innerHTML = `
       <div class="toolbar">${seg("pc", [["white", "Yo con blancas"], ["black", "Yo con negras"]], color)}</div>
-      <p class="muted">Vos con ${colorName(color)} contra ${esc(RNAME())} con ${opp}. Esperado = 40% tu puntaje +
-        40% (100 − el de él) + 20% motor, suavizado cuando hay pocas partidas. Hacé clic para ver la línea en el tablero.</p>
+      <p class="muted">Vos con ${colorName(color)} contra ${esc(RNAME())} con ${opp}. <b>Esperado</b> = tu expectativa por Elo
+        (${baseTxt}) + la ventaja según el motor + cuánto rinde cada uno sobre su Elo en esa posición (muy suavizado: con
+        pocas partidas casi no cuenta). Entre paréntesis, cuánto suma o resta sobre el Elo. Clic: la línea en el tablero.</p>
       <div class="plan-list">${items.map((it, i) => `
         <div class="plan-item${it.line ? " clickable" : ""}" data-i="${i}">
           <span class="badge ${KIND[it.kind]?.[1] || ""}">${KIND[it.kind]?.[0] || esc(it.kind)}</span>
           <span>${esc(it.text)}</span>
         </div>`).join("") || '<p class="muted">Sin recomendaciones: faltan partidas en común o evaluaciones.</p>'}</div>
-      <h3>Aperturas que juegan los dos</h3>
-      ${table(["Apertura", "Vos (partidas · %)", `Él con ${opp}`, "CPL vos / él", "Esperado"], famRows)}
+      ${m ? `<h3>Aperturas que juegan los dos</h3>
+      <p class="muted">Entre paréntesis, rendimiento sobre el Elo. "Salida": evaluación media al terminar la apertura
+        (jugada 10), desde cada uno: es la señal más estable para elegir apertura.</p>
+      ${table(["Apertura", "Vos (partidas · %)", `Él con ${opp}`, "Salida vos / él", "Esperado (vs. Elo)", "Confianza"], famRows)}
       <h3>Posiciones favorables</h3>
       <div data-battles="favorable">${table(bHeaders, battleRows(m.favorable, color))}</div>
       <h3>Posiciones a evitar</h3>
-      <div data-battles="danger">${table(bHeaders, battleRows(m.danger, color))}</div>`;
+      <div data-battles="danger">${table(bHeaders, battleRows(m.danger, color))}</div>` : ""}`;
     bindSeg(root, "pc", (v) => { state.planColor = v; renderPlan(); });
     $$(".plan-item.clickable", root).forEach((el) => el.addEventListener("click", () => {
       $$(".plan-item", root).forEach((x) => x.classList.remove("active"));
@@ -236,6 +275,129 @@
         showItem({ line: b.line, shapes }, color, `${b.opening || ""} · esperado ${fmt(b.expected_pct)}%`);
       }));
     });
+  }
+
+  // ---------------------------------------------------------------- Preparación
+  function renderPrep() {
+    const root = $("#tab-prep");
+    const r = report();
+    const color = state.prepColor || "white";
+    const pr = r.prep ? r.prep[color] : null;
+    const opp = colorName(color === "white" ? "black" : "white");
+    if (!pr) {
+      root.innerHTML = '<p class="muted">Este informe es anterior a la preparación: regeneralo con <b>Generar informes</b>.</p>';
+      return;
+    }
+    const ml = pr.main_line || [];
+    const targets = pr.targets || [];
+    const items = targets.map((t, i) => `
+      <div class="weak" data-i="${i}">
+        <div class="head">
+          <span><b>${t.memorize_plies} jugadas</b> · ${t.my_moves} tuyas para memorizar
+            ${t.in_my_repertoire ? '<span class="badge good">ya las jugás</span>' : ""}</span>
+          <span>
+            <span class="badge ${t.kind === "trampa" ? "good" : "info"}">${t.kind === "trampa" ? "su error" : "ventaja"}</span>
+            <span class="badge">llega ${fmt(t.reach_pct)}%</span>
+            <span class="badge good">+${fmt(t.gain_pct)} pts</span>
+          </span>
+        </div>
+        <div class="line">${esc(t.line.map((m) => m.san).join(" "))}</div>
+        <div class="muted" style="font-size:12px;margin-top:4px">Evaluación al llegar: ${evalTxt(t.eval_for_me)} ·
+          ${t.rival_games} partidas suyas en esa posición · valor ${fmt(t.value, 1)} (probabilidad × ganancia)</div>
+      </div>`);
+    root.innerHTML = `
+      <div class="toolbar">${seg("prc", [["white", "Yo con blancas"], ["black", "Yo con negras"]], color)}</div>
+      <p class="muted">Para una partida preparada contra ${esc(RNAME())} con ${opp} (${pr.games} partidas suyas). Lo que
+        conviene memorizar: las líneas que él repite y en las que quedás mejor según el motor. "Llega" es la probabilidad de
+        que siga la línea si vos jugás esas jugadas; "+pts" es lo que suma a tu expectativa la posición a la que llegás.</p>
+      <div class="cards">
+        ${card("Qué tan predecible es", pr.predictability_pct === null ? "–" : pr.predictability_pct + "%")}
+        ${card("Línea principal hasta", ml.length ? `jugada ${Math.ceil(ml.length / 2)}` : "–")}
+        ${card("Llega al final de esa línea", pr.main_line_reach_pct === null ? "–" : fmt(pr.main_line_reach_pct) + "%")}
+      </div>
+      <h3>Su línea más jugada</h3>
+      <div class="plan-item clickable" id="prep-main"><span class="badge info">Línea</span>
+        <span>${ml.length ? esc(ml.map((m, i) => (i % 2 === 0 ? `${i / 2 + 1}.` : "") + m.san).join(" ")) : "Sin datos suficientes."}</span></div>
+      <p class="muted">Se sigue su jugada más frecuente (y la respuesta más común de sus rivales) mientras la probabilidad
+        de que llegue sea al menos 25%. Más allá de eso, memorizar rinde poco: se va por otro lado.</p>
+      <h3>Líneas para preparar</h3>
+      <div class="weak-list">${items.join("") || '<p class="muted">No hay líneas con ventaja clara y suficiente probabilidad con los datos actuales.</p>'}</div>`;
+    bindSeg(root, "prc", (v) => { state.prepColor = v; renderPrep(); });
+    $("#prep-main", root).addEventListener("click", () => setLine(ml, { orientation: color, caption: `Línea principal de ${RNAME()}` }));
+    $$(".weak", root).forEach((el) => el.addEventListener("click", () => {
+      $$(".weak", root).forEach((x) => x.classList.remove("active"));
+      el.classList.add("active");
+      const t = targets[+el.dataset.i];
+      const shapes = t.best_reply_uci ? [{ orig: t.best_reply_uci.slice(0, 2), dest: t.best_reply_uci.slice(2, 4), brush: "green" }] : null;
+      setLine(t.line, { shapes, orientation: color, caption: `Preparación · llega ${fmt(t.reach_pct)}%` });
+    }));
+  }
+
+  // ---------------------------------------------------------------- Mi juego
+  function renderMine() {
+    const root = $("#tab-mine");
+    const r = report();
+    const imp = r.me && r.me.improvement;
+    if (!imp) {
+      root.innerHTML = r.me
+        ? '<p class="muted">Este informe es anterior a "Mi juego": regeneralo con <b>Generar informes</b>.</p>'
+        : '<p class="muted">Completá tu usuario (<b>me</b>) en la configuración para ver tu análisis.</p>';
+      return;
+    }
+    const byKey = Object.fromEntries(imp.areas.map((a) => [a.key, a]));
+    const prio = imp.priorities.map((k) => byKey[k]);
+    const detail = (a) => {
+      if (a.key === "errors") {
+        const rows = (a.by_phase || []).map((p) => `<tr><td>${PHASES[p.phase]}</td><td>${p.moves}</td>
+          <td>${fmt(p.error_rate_pct, 1)}%</td><td>${fmt(p.blunder_rate_pct, 1)}%</td><td>${fmt(p.avg_cpl)}</td></tr>`);
+        const k = a.kinds || {};
+        const total = (k.missed_tactic || 0) + (k.allowed_tactic || 0) + (k.positional || 0) || 1;
+        const bar = (n, cls, label) => `<div class="bar-row"><div class="lbl">${label}</div><div class="bar-track">
+          <div class="bar ${cls}"><span style="width:${(100 * (n || 0)) / total}%"></span></div>
+          <div class="bar-val">${n || 0} (${fmt((100 * (n || 0)) / total)}%)</div></div></div>`;
+        return table(["Fase", "Jugadas evaluadas", "Errores", "Graves", "CPL medio"], rows) +
+          `<div class="bars" style="margin-top:8px">${bar(k.missed_tactic, "", "Táctica no vista")}
+            ${bar(k.allowed_tactic, "me", "Táctica permitida")}${bar(k.positional, "", "Posicional")}</div>`;
+      }
+      if (a.key === "openings") {
+        const rows = (a.weak || []).map((o) => `<tr><td>${esc(o.opening)} <span class="muted">${colorName(o.color)}</span></td>
+          <td>${o.games}</td><td>${evalTxt(o.avg_eval_out)}</td><td>${sgn(o.over_pct)}</td><td>${fmt(o.cost_per_100, 1)}</td></tr>`);
+        return rows.length ? table(["Apertura", "Partidas", "Salida (motor)", "Sobre tu Elo", "Pts / 100"], rows) : "";
+      }
+      if (a.key === "endgames") {
+        const rows = (a.types || []).map((t) => `<tr><td>${esc(t.type)}</td><td>${t.games}${lowSample(t.games)}</td>
+          <td>${fmt(t.score_pct)}%</td><td>${sgn(t.over_pct)}</td></tr>`);
+        return table(["Tipo de final", "Partidas", "Puntaje", "Sobre tu Elo"], rows);
+      }
+      if (a.key === "tendencies") {
+        const row = (label, x) => `<tr><td>${label}</td><td>${x.games}</td><td>${sgn(x.over_pct)}</td><td>${confBadge(x.confidence)}</td></tr>`;
+        return table(["Situación", "Partidas", "Sobre tu Elo", "Confianza"], [row("Después de perder (misma sesión)", a.after_loss),
+          row("Después de ganar (misma sesión)", a.after_win), row("Primeras 4 de la sesión", a.early_session),
+          row("Desde la 5ª de la sesión", a.long_session)]);
+      }
+      return "";
+    };
+    const areaHtml = (a) => `
+      <div class="area">
+        <div class="area-head"><h3>${esc(a.title)}</h3>
+          <span class="badge ${a.cost_per_100 >= 3 ? "bad" : a.cost_per_100 >= 1 ? "warn" : ""}" title="Estimación de puntos que te cuesta cada 100 partidas">
+            ${a.cost_per_100 > 0 ? "−" + fmt(a.cost_per_100, 1) + " pts / 100 partidas" : "sin costo claro"}</span></div>
+        ${a.findings.length ? `<ul class="findings">${a.findings.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : '<p class="muted">Nada llamativo con los datos actuales.</p>'}
+        ${a.tips.length ? `<div class="tips"><b>Qué hacer</b><ul>${a.tips.map((t) => `<li>${esc(t)}</li>`).join("")}</ul></div>` : ""}
+        ${detail(a)}
+      </div>`;
+    root.innerHTML = `
+      <p class="muted">Tu juego en general (${imp.games} partidas), no solo contra ${esc(RNAME())}. Cada área estima cuántos
+        puntos te cuesta cada 100 partidas, para saber por dónde empezar. Jugadas evaluadas por el motor: ${fmt(imp.eval_coverage_pct)}%
+        ${imp.eval_coverage_pct < 80 ? "(las métricas de errores, fases y conversión mejoran con más análisis: <code>engine.analyse_my_games_fully</code>)" : ""}.</p>
+      <h3>Prioridades</h3>
+      <div class="cards">${prio.map((a, i) => `<div class="card prio"><div class="label">${i + 1}. ${esc(a.title)}</div>
+        <div class="value">−${fmt(a.cost_per_100, 1)}</div><div class="sub">puntos cada 100 partidas</div></div>`).join("") ||
+        '<p class="muted">Nada que se destaque todavía.</p>'}</div>
+      ${imp.areas.map(areaHtml).join("")}
+      <h2>Tu manejo del tiempo y tus aperturas</h2>
+      <p class="muted">El detalle de tu reloj está en la pestaña <b>Tiempo</b> (columna "Vos") y el de tus aperturas en
+        <b>Aperturas</b> y <b>Posiciones flojas</b> (eligiendo "Yo").</p>`;
   }
 
   // ---------------------------------------------------------------- Tiempo
@@ -341,13 +503,16 @@
         </div>
         <div>Juega <b>${esc(t.usual_san)}</b> ${t.usual_count} de ${t.occurrences} veces (mejor: ${esc(t.best_san || "–")}).
           Castigo: <b>${esc(t.refutation_san)}</b>${t.refutation_line ? ` <span class="muted">${esc(t.refutation_line)}</span>` : ""}</div>
-        <div class="line">Sus rivales encontraron la refutación ${t.refutation_found} de ${t.games_after_mistake} veces ·
+        <div class="line">${t.reach_pct !== undefined ? `Llega a la posición en el <b>${fmt(t.reach_pct)}%</b> de sus partidas con
+          ${colorName(t.rival_color)} · juega el error el ${fmt(t.error_pct)}% · valor esperado <b>+${fmt(t.expected_value_pct, 1)} pts</b><br>` : ""}
+          Sus rivales encontraron la refutación ${t.refutation_found} de ${t.games_after_mistake} veces ·
           él hizo ${fmt(t.rival_score_pct)}% (castigado: ${fmt(t.rival_score_when_punished_pct)}%, sin castigo: ${fmt(t.rival_score_when_missed_pct)}%)
           ${t.forcing ? " · refutación forzante (captura o jaque)" : ""}</div>
       </div>`);
     root.innerHTML = `
       <div class="toolbar">${report().me ? seg("tm", [["all", "Todas"], ["mine", "Solo en mi repertorio"]], onlyMine ? "mine" : "all") : ""}</div>
-      <p class="muted">Posiciones que ${esc(RNAME())} repite donde su jugada habitual es un error según el motor.
+      <p class="muted">Posiciones que ${esc(RNAME())} repite donde su jugada habitual es un error según el motor, ordenadas por
+        valor esperado: probabilidad de que llegue × probabilidad de que se equivoque × lo que ganás al castigarlo.
         "Fácil": la refutación es forzante o hay varias jugadas que ganan; "precisa": hay una sola. Clic: el tablero muestra
         la posición tras su error con la refutación en verde (→ para seguir la variante).</p>
       <div class="weak-list">${items.join("") || '<p class="muted">No se encontraron trampas con los datos actuales.</p>'}</div>`;
@@ -370,18 +535,21 @@
     const key = state.openingsBy === "family" ? "openings" : "openings_detail";
     const rowsFor = (c) => sec[key][c].map((o) => `<tr>
         <td>${esc(o.opening)} <span class="muted">${esc(o.eco || "")}</span></td>
-        <td>${o.games}</td><td>${wdl(o.wins, o.draws, o.losses)}</td>
-        <td class="${pctClass(o.score_pct)}">${fmt(o.score_pct)}%</td>
+        <td>${o.games}${lowSample(o.games)}</td><td>${wdl(o.wins, o.draws, o.losses)}</td>
+        <td class="${pctClass(o.score_pct)}"${ciTitle(o.score_ci)}>${fmt(o.score_pct)}%</td>
+        <td class="${o.over_pct >= 5 ? "pct-good" : o.over_pct <= -5 ? "pct-bad" : ""}">${sgn(o.over_pct)}</td>
         <td>${fmt(o.avg_opp_rating)}</td>
         <td title="${o.games_with_evals} partidas con evaluación">${fmt(o.avg_cpl)}</td>
         <td>${o.avg_eval_out === null ? "–" : (o.avg_eval_out > 0 ? "+" : "") + fmt(o.avg_eval_out / 100, 2)}</td></tr>`);
-    const headers = ["Apertura", "Partidas", "G / T / P", "Puntaje", "Elo rival", "CPL apertura", "Eval. ply 20"];
+    const headers = ["Apertura", "Partidas", "G / T / P", "Puntaje", "Sobre Elo", "Elo rival", "CPL apertura", "Eval. ply 20"];
     root.innerHTML = `
       <div class="toolbar">
         ${report().me ? seg("who", [["rival", RNAME()], ["me", "Yo"]], who) : ""}
         ${seg("by", [["family", "Por familia"], ["detail", "Por variante"]], state.openingsBy)}
       </div>
-      <p class="muted">CPL apertura: pérdida media de centipeones en los primeros 20 plies (menos es mejor).
+      <p class="muted">Sobre Elo: puntaje real menos el esperado por los ratings (lo que importa; el puntaje bruto depende de
+        contra quién jugó). Pasá el mouse por el puntaje para ver el intervalo. Con pocas partidas, cualquier % engaña.
+        CPL apertura: pérdida media de centipeones en los primeros 20 plies (menos es mejor).
         Eval. ply 20: evaluación media al salir de la apertura, desde el punto de vista de ${esc(whoName(who))}.</p>
       <h3>${esc(whoName(who))} con blancas</h3>${table(headers, rowsFor("white"))}
       <h3>${esc(whoName(who))} con negras</h3>${table(headers, rowsFor("black"))}`;
@@ -582,7 +750,8 @@
   function renderAllForPrint() {
     // Para el PDF se imprimen todas las secciones (renderizadas) una tras otra.
     if (!report()) return;
-    renderHero(); renderSummary(); renderPlan(); renderTime(); renderTraps(); renderOpenings(); renderWeak();
+    renderHero(); renderSummary(); renderPlan(); renderPrep(); renderTime(); renderTraps(); renderOpenings(); renderWeak();
+    renderMine();
   }
 
   function openPdfDialog() {
@@ -648,7 +817,9 @@
     $("#hero-avatar").textContent = name.slice(0, 1).toUpperCase();
     $("#hero-eyebrow").textContent = m.me ? `Informe de rival · preparado para ${m.me_name || m.me}` : "Informe de rival";
     $("#hero-title").textContent = name;
-    $("#hero-meta").innerHTML = `<b>${s.games} partidas</b> · rating ${fmt(s.last_rating)} · ${esc(m.perf_types.join(", "))}
+    const b = r.base;
+    $("#hero-meta").innerHTML = (b ? `<span class="hero-expect">Por Elo esperás <b>${fmt(b.expected_pct)}%</b> · vos ${b.my_rating} vs. ${b.rival_rating} en ${esc(b.perf)}</span><br>` : "") +
+      `<b>${s.games} partidas</b> · rating ${fmt(s.last_rating)} · ${esc(m.perf_types.join(", "))}
       · desde ${esc(m.since || "el inicio")}${m.until ? " hasta " + esc(m.until) : ""} · máx. ${m.max_games || "∞"} partidas<br>
       Stockfish prof. ${m.engine_depth}, primeros ${m.analysed_plies || "todos los"} plies · posiciones evaluadas ${fmt(m.eval_coverage_pct)}%
       · generado ${esc(new Date(m.generated_at).toLocaleString())}`;
@@ -690,8 +861,8 @@
     if (state.tab === "config") return renderConfig();
     $$(".tab").forEach((t) => { if (!hasReport && t.id !== "tab-config") t.innerHTML = ""; });
     if (!hasReport) return;
-    ({ summary: renderSummary, plan: renderPlan, time: renderTime, traps: renderTraps, openings: renderOpenings,
-      tree: renderTree, weak: renderWeak })[state.tab]();
+    ({ summary: renderSummary, plan: renderPlan, prep: renderPrep, time: renderTime, traps: renderTraps,
+      openings: renderOpenings, tree: renderTree, weak: renderWeak, mine: renderMine })[state.tab]();
   }
 
   async function loadReports(only = null) {
