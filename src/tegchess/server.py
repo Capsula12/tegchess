@@ -10,12 +10,13 @@ import traceback
 from collections.abc import Callable
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 
 from tegchess import pipeline
+from tegchess.pdf import PDF_DIR, export_pdfs
 from tegchess.config import Config, find_stockfish, lichess_token, load_config, save_config
 from tegchess.report import WEB_DIR
 
@@ -23,7 +24,7 @@ log = logging.getLogger(__name__)
 
 
 class JobRequest(BaseModel):
-    action: str                        # fetch | analyze | report | all
+    action: str                        # fetch | analyze | report | all | pdf
     users: list[str] | None = None
 
 
@@ -44,14 +45,14 @@ class JobRunner:
 
         return tick
 
-    def start(self, action: str, users: list[str] | None) -> None:
+    def start(self, action: str, users: list[str] | None, base_url: str = "") -> None:
         if not self._lock.acquire(blocking=False):
             raise HTTPException(409, "Ya hay una tarea en curso")
         self.state = {"running": True, "action": action, "steps": [], "error": None, "result": None,
                       "started_at": time.time(), "finished_at": None}
-        threading.Thread(target=self._run, args=(action, users), daemon=True).start()
+        threading.Thread(target=self._run, args=(action, users, base_url), daemon=True).start()
 
-    def _run(self, action: str, users: list[str] | None) -> None:
+    def _run(self, action: str, users: list[str] | None, base_url: str) -> None:
         try:
             cfg = load_config()
             result: dict[str, Any] = {}
@@ -62,7 +63,11 @@ class JobRunner:
             if action in ("report", "all"):
                 result["report"] = [p.name for p in pipeline.build_reports(cfg, users, self.progress)]
                 result["export"] = str(pipeline.export_html(cfg))
-            if action not in ("fetch", "analyze", "report", "all"):
+            if action == "pdf":
+                # No toca la base: imprime los informes JSON ya generados.
+                result["pdf"] = export_pdfs(cfg, users or cfg.opponents, base_url, self.progress)
+                result["pdf_dir"] = str(PDF_DIR)
+            if action not in ("fetch", "analyze", "report", "all", "pdf"):
                 raise ValueError(f"Acción desconocida: {action}")
             self.state["result"] = result
         except Exception as e:  # se muestra en la interfaz
@@ -120,8 +125,8 @@ def create_app() -> FastAPI:
         return FileResponse(path, media_type="application/json")
 
     @app.post("/api/jobs")
-    def start_job(req: JobRequest) -> dict[str, Any]:
-        jobs.start(req.action, req.users)
+    def start_job(req: JobRequest, request: Request) -> dict[str, Any]:
+        jobs.start(req.action, req.users, str(request.base_url))
         return jobs.state
 
     @app.get("/api/jobs")

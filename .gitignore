@@ -12,6 +12,10 @@ config.yaml
 # Datos generados (partidas, DuckDB, informes)
 data/
 
+# PDF de los informes (tegchess los genera en informes/)
+informes/*
+!informes/.gitkeep
+
 # Binarios de Stockfish
 stockfish*/
 stockfish*.exe
