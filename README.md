@@ -12,7 +12,8 @@ de análisis (`src/tegchess`) está separado de la presentación (`web/`) y los 
 ## Requisitos
 
 - Windows, Python 3.11+ (recomendado 3.13).
-- Stockfish: `winget install Stockfish.Stockfish` (se detecta solo) o indicar la ruta en `config.yaml`.
+- Stockfish: `run.bat` lo instala con winget si no lo encuentra (o `winget install Stockfish.Stockfish`
+  a mano, o indicar la ruta en `config.yaml`).
 
 ## Uso rápido
 
@@ -78,7 +79,7 @@ Se puede copiar la carpeta entera (por ejemplo a un pendrive) y seguir en otra P
 - El entorno `.venv` **no** es portable (guarda rutas de Python de esta PC). No hace falta copiarlo:
   si está y no funciona, `run.bat` lo detecta y lo recrea solo. Para eso, la otra PC necesita Python 3.11+
   (python.org, con "Add to PATH") e internet la primera vez.
-- Stockfish no viaja con el repo: instalalo allá con `winget install Stockfish.Stockfish`. Si en
+- Stockfish no viaja con el repo: `run.bat` lo instala con winget la primera vez. Si en
   `config.yaml` pusiste una ruta fija en `engine.path`, volvé a `null` para que lo detecte solo.
 - `run.bat` muestra al arrancar qué detectó (usuarios, Stockfish, token).
 

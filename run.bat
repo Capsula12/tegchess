@@ -38,6 +38,19 @@ if errorlevel 1 (
 REM 3) Config local: si no hay config.yaml se parte del ejemplo.
 if not exist "config.yaml" copy config.example.yaml config.yaml >nul
 
-REM 4) Diagnostico rapido (Stockfish, token, usuarios) y servidor.
+REM 4) Stockfish: si no se encuentra (config, PATH o carpeta de winget), se instala con winget.
+"%PY%" -c "import sys; from tegchess.config import find_stockfish, load_config; sys.exit(0 if find_stockfish(load_config().engine.path) else 1)" >nul 2>&1
+if errorlevel 1 (
+    where winget >nul 2>&1
+    if errorlevel 1 (
+        echo No encontre Stockfish ni winget. Instala Stockfish a mano e indica engine.path en config.yaml.
+    ) else (
+        echo No encontre Stockfish: se instala con winget...
+        winget install --id Stockfish.Stockfish -e --source winget
+        if errorlevel 1 echo No se pudo instalar Stockfish; el informe va a salir sin mejores jugadas ni trampas.
+    )
+)
+
+REM 5) Diagnostico rapido (Stockfish, token, usuarios) y servidor.
 "%PY%" -m tegchess doctor
 "%PY%" -m tegchess serve %*

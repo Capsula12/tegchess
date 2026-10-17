@@ -126,9 +126,13 @@ def find_stockfish(configured: str | None = None) -> str | None:
         found = shutil.which(name)
         if found:
             return found
-    local = os.environ.get("LOCALAPPDATA")
-    if local:
-        pkgs = Path(local) / "Microsoft" / "WinGet" / "Packages"
+    # winget instala los paquetes portables por usuario o, con --scope machine, en Program Files.
+    roots = [(os.environ.get("LOCALAPPDATA"), ("Microsoft", "WinGet", "Packages")),
+             (os.environ.get("ProgramFiles"), ("WinGet", "Packages"))]
+    for base, parts in roots:
+        if not base:
+            continue
+        pkgs = Path(base).joinpath(*parts)
         if pkgs.exists():
             for exe in sorted(pkgs.glob("Stockfish.Stockfish*/**/stockfish*.exe")):
                 return str(exe)
