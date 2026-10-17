@@ -18,6 +18,7 @@ from tegchess.analysis.crossover import (
     reinforce_positions,
     select_battles,
 )
+from tegchess.analysis.clock import time_profile
 from tegchess.analysis.lines import line_to, san
 from tegchess.analysis.openings import opening_summary, repeated_positions, repertoire_tree
 from tegchess.analysis.traps import find_traps
@@ -66,7 +67,8 @@ def profile(con: duckdb.DuckDBPyConnection, cfg: Config, player: str) -> dict[st
                count(*) FILTER (WHERE score = 0.5) AS draws
         FROM scope GROUP BY status ORDER BY losses + wins + draws DESC
     """, params)
-    return {"summary": summary, "by_color": by_color, "by_perf": by_perf, "endings": endings}
+    return {"summary": summary, "by_color": by_color, "by_perf": by_perf, "endings": endings,
+            "time": time_profile(con, cfg, player)}
 
 
 def weak_positions(con: duckdb.DuckDBPyConnection, cfg: Config, player: str, limit: int = 25) -> list[dict[str, Any]]:
@@ -137,13 +139,14 @@ def _where(item: dict[str, Any], capital: bool = True) -> str:
     return f"{prefix} {item['opening']}" if item.get("opening") else f"{prefix} esta posición"
 
 
-def build_plan(matchup: dict[str, Any], traps: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+def build_plan(matchup: dict[str, Any], traps: list[dict[str, Any]],
+               time_hints: list[str] = ()) -> dict[str, list[dict[str, Any]]]:
     """Recomendaciones concretas por color. Cada una puede traer línea y flechas para el tablero."""
     plan: dict[str, list[dict[str, Any]]] = {}
     for color in COLORS:
         m = matchup[color]
         opp = "negras" if color == "white" else "blancas"
-        items: list[dict[str, Any]] = []
+        items: list[dict[str, Any]] = [{"kind": "tiempo", "text": h} for h in time_hints]
 
         fams = [f for f in m["families"] if f["my_games"] >= 3 and f["rival_games"] >= 2]
         for i, f in enumerate(fams[:2]):
@@ -219,7 +222,9 @@ def build_report(con: duckdb.DuckDBPyConnection, cfg: Config, rival: str) -> dic
             "version": __version__,
             "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "me": me,
+            "me_name": cfg.me if has_me else None,
             "rival": rival,
+            "rival_name": next((o for o in cfg.opponents if o.lower() == rival), rival),
             "perf_types": cfg.download.perf_types,
             "since": str(cfg.download.since) if cfg.download.since else None,
             "until": str(cfg.download.until) if cfg.download.until else None,
@@ -231,7 +236,8 @@ def build_report(con: duckdb.DuckDBPyConnection, cfg: Config, rival: str) -> dic
         "rival": rival_section,
         "me": player_section(con, cfg, me) if has_me else None,
         "matchup": matchup,
-        "plan": build_plan(matchup, rival_section["traps"]) if matchup else None,
+        "plan": build_plan(matchup, rival_section["traps"], rival_section["profile"]["time"]["hints"])
+        if matchup else None,
     }
 
 
