@@ -1,7 +1,7 @@
 import chess
 import pytest
 
-from tegchess.analysis.crossover import battle_positions, expected_score, family_matchup, shrink
+from tegchess.analysis.crossover import battle_positions, family_matchup
 from tegchess.analysis.traps import find_traps
 from tegchess.config import Config, find_stockfish
 from tegchess.engine import evaluate_pending
@@ -19,19 +19,6 @@ def _cfg(tmp_path, **analysis):
     })
 
 
-def test_shrink_pulls_small_samples_to_half():
-    assert shrink(1.0, 1) < shrink(1.0, 20) < 1.0
-    assert shrink(None, 0) == 0.5
-
-
-def test_expected_score_combines_both_sides():
-    # Yo gano mucho, él pierde mucho => esperado alto; al revés => bajo.
-    assert expected_score(0.9, 20, 0.1, 20, None) > 75
-    assert expected_score(0.1, 20, 0.9, 20, None) < 25
-    # El motor mueve la aguja sin dominar.
-    assert expected_score(0.5, 10, 0.5, 10, 300) > expected_score(0.5, 10, 0.5, 10, -300)
-
-
 def test_battle_positions_finds_shared_positions(con, tmp_path, raw_games):
     store_games(con, [parse_game(r) for r in raw_games])
     cfg = _cfg(tmp_path)
@@ -42,6 +29,7 @@ def test_battle_positions_finds_shared_positions(con, tmp_path, raw_games):
     for b in battles:
         assert 0 <= b["expected_pct"] <= 100
         assert b["to_move"] in ("me", "rival")
+        assert b["confidence"] in ("baja", "media", "alta")
     fams = family_matchup(con, cfg, "german11", "lucky09", "black")
     assert any(f["opening"] == "Philidor Defense" for f in fams)
 

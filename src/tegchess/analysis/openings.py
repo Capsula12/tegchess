@@ -7,6 +7,7 @@ from typing import Any
 import chess
 import duckdb
 
+from tegchess.analysis.expectation import confidence, wilson
 from tegchess.analysis.scope import scope_cte
 from tegchess.config import Config
 from tegchess.db import fetch_dicts
@@ -46,6 +47,9 @@ def opening_summary(con: duckdb.DuckDBPyConnection, cfg: Config, player: str, co
            count(*) FILTER (WHERE s.score = 0.5) AS draws,
            count(*) FILTER (WHERE s.score = 0) AS losses,
            round(100 * avg(s.score), 1) AS score_pct,
+           avg(s.score) AS _score,
+           sum(coalesce(s.score - 1 / (1 + pow(10, (s.opp_rating - s.rating) / 400.0)), 0)) AS residual_sum,
+           round(100 * avg(s.score - 1 / (1 + pow(10, (s.opp_rating - s.rating) / 400.0))), 1) AS over_pct,
            round(avg(s.opp_rating)) AS avg_opp_rating,
            round(avg(o.cpl), 1) AS avg_cpl,
            count(o.cpl) AS games_with_evals,
@@ -57,7 +61,11 @@ def opening_summary(con: duckdb.DuckDBPyConnection, cfg: Config, player: str, co
     GROUP BY 1
     ORDER BY games DESC, opening
     """
-    return fetch_dicts(con, sql, params)
+    rows = fetch_dicts(con, sql, params)
+    for r in rows:
+        r["score_ci"] = wilson(r.pop("_score"), r["games"])
+        r["confidence"] = confidence(r["games"])
+    return rows
 
 
 def repertoire_tree(con: duckdb.DuckDBPyConnection, cfg: Config, player: str, color: str,

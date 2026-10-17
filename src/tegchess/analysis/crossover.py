@@ -1,14 +1,14 @@
 """Cruce de mi repertorio contra el de un rival.
 
 Para cada color mío (el rival juega el contrario) se comparan:
-- Familias de apertura que juegamos los dos: mi resultado, el suyo y quién juega mejor (CPL).
+- Familias de apertura que juegamos los dos: cómo salimos de la apertura (motor) y cómo rendimos.
 - Posiciones a las que llegamos los dos (por EPD, así cuentan las transposiciones): el
   "campo de batalla". En las que me toca mover se evalúan mis opciones según cómo le fue
   al rival después de cada una.
 
-Puntaje esperado (0-100, desde mí), explicable y con muestras chicas suavizadas:
-    0.4 · mi puntaje + 0.4 · (100 − su puntaje) + 0.2 · % de victoria según el motor
-donde cada puntaje se "encoge" hacia 50% según cuántas partidas hay (SHRINK_K).
+Puntaje esperado (0-100, desde mí) = expectativa por Elo de este cruce + ajustes
+(ver analysis/expectation.py): la ventaja según el motor (la señal estable) y el rendimiento
+sobre el Elo de cada uno en esa posición, muy suavizado porque con pocas partidas es ruido.
 """
 
 from __future__ import annotations
@@ -19,36 +19,27 @@ from typing import Any
 
 import duckdb
 
+from tegchess.analysis.expectation import confidence, expected_with_adjustments, wilson
 from tegchess.analysis.lines import line_to_position, opening_at, san
 from tegchess.analysis.openings import opening_summary, repeated_positions
 from tegchess.analysis.scope import scope_cte
 from tegchess.config import Config
 from tegchess.engine import epd_to_fen
-from tegchess.metrics import eval_cp, win_pct
+from tegchess.metrics import eval_cp
 
-SHRINK_K = 4
-W_ME, W_RIVAL, W_ENGINE = 0.4, 0.4, 0.2
+# Residuo de una partida: resultado − esperado por Elo (0 si falta algún rating).
+RESIDUAL_SQL = "coalesce(s.score - 1 / (1 + pow(10, (s.opp_rating - s.rating) / 400.0)), 0)"
 
 
 def opposite(color: str) -> str:
     return "black" if color == "white" else "white"
 
 
-def shrink(score: float | None, n: int, k: int = SHRINK_K) -> float:
-    """Puntaje (0-1) suavizado hacia 0.5 con k partidas ficticias de tablas."""
-    if not n or score is None:
-        return 0.5
-    return (score * n + 0.5 * k) / (n + k)
-
-
-def expected_score(my_score: float | None, n_me: int, rival_score: float | None, n_rival: int,
-                   eval_for_me: float | None) -> float:
-    """Puntaje esperado para mí (0-100). rival_score es desde el punto de vista del rival."""
-    parts = [(W_ME, shrink(my_score, n_me)), (W_RIVAL, 1 - shrink(rival_score, n_rival))]
-    if eval_for_me is not None:
-        parts.append((W_ENGINE, win_pct(eval_for_me) / 100))
-    total_w = sum(w for w, _ in parts)
-    return round(100 * sum(w * v for w, v in parts) / total_w, 1)
+def _expected(base: float, eval_for_me: float | None, mine: tuple[float | None, int],
+              theirs: tuple[float | None, int]) -> dict[str, Any]:
+    out = expected_with_adjustments(base, eval_for_me, mine, theirs)
+    out["confidence"] = confidence(min(mine[1], theirs[1]) if theirs[1] else mine[1])
+    return out
 
 
 # --- datos por posición --------------------------------------------------
@@ -59,6 +50,7 @@ class PosStats:
     n: int
     score: float
     ply: int
+    residual: float = 0.0   # suma de (resultado − esperado por Elo)
 
 
 def _positions(con: duckdb.DuckDBPyConnection, cfg: Config, player: str, color: str,
@@ -67,25 +59,25 @@ def _positions(con: duckdb.DuckDBPyConnection, cfg: Config, player: str, color: 
     cte, params = scope_cte(cfg, player, color)
     pos_rows = con.execute(f"""
         WITH {cte}
-        SELECT m.epd_before, count(DISTINCT s.game_id), avg(s.score), min(m.ply)
+        SELECT m.epd_before, count(DISTINCT s.game_id), avg(s.score), min(m.ply), sum({RESIDUAL_SQL})
         FROM scope s JOIN moves m ON m.game_id = s.game_id
         WHERE m.ply <= ?
         GROUP BY 1
     """, [*params, max_ply]).fetchall()
-    stats = {epd: PosStats(n, score, ply) for epd, n, score, ply in pos_rows}
+    stats = {epd: PosStats(n, score, ply, res or 0.0) for epd, n, score, ply, res in pos_rows}
 
     move_rows = con.execute(f"""
         WITH {cte}
         SELECT q.epd_before, q.uci, any_value(q.san), any_value(q.epd_after), count(*), avg(s.score),
-               avg(q.cpl), avg(q.wp_loss)
+               avg(q.cpl), avg(q.wp_loss), sum({RESIDUAL_SQL})
         FROM scope s JOIN move_quality q ON q.game_id = s.game_id AND q.color = s.color
         WHERE q.ply <= ?
         GROUP BY 1, 2
     """, [*params, max_ply]).fetchall()
     moves: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for epd, uci, s, after, n, score, cpl, wpl in move_rows:
+    for epd, uci, s, after, n, score, cpl, wpl, res in move_rows:
         moves[epd].append({"uci": uci, "san": s, "epd_after": after, "n": n, "score": score,
-                           "cpl": cpl, "wp_loss": wpl})
+                           "cpl": cpl, "wp_loss": wpl, "residual": res or 0.0})
     for lst in moves.values():
         lst.sort(key=lambda m: m["n"], reverse=True)
     return stats, moves
@@ -114,8 +106,12 @@ def _pct(x: float | None) -> float | None:
 
 
 def family_matchup(con: duckdb.DuckDBPyConnection, cfg: Config, me: str, rival: str,
-                   my_color: str) -> list[dict[str, Any]]:
-    """Familias que jugamos los dos (yo con my_color, él con el contrario)."""
+                   my_color: str, base: float = 0.5) -> list[dict[str, Any]]:
+    """Familias que jugamos los dos (yo con my_color, él con el contrario).
+
+    La evaluación al salir de la apertura es la señal estable: se promedia la mía (lo que suelo
+    conseguir) con la suya vista desde mí (lo que él suele conceder).
+    """
     mine = {o["opening"]: o for o in opening_summary(con, cfg, me, my_color)}
     theirs = {o["opening"]: o for o in opening_summary(con, cfg, rival, opposite(my_color))}
     out = []
@@ -123,13 +119,17 @@ def family_matchup(con: duckdb.DuckDBPyConnection, cfg: Config, me: str, rival: 
         a, b = mine[name], theirs[name]
         evals = [x for x in (a["avg_eval_out"], None if b["avg_eval_out"] is None else -b["avg_eval_out"])
                  if x is not None]
+        eval_me = sum(evals) / len(evals) if evals else None
+        exp = _expected(base, eval_me, (a["residual_sum"], a["games"]), (b["residual_sum"], b["games"]))
         out.append({
             "opening": name,
             "eco": a["eco"] or b["eco"],
             "my_games": a["games"], "my_score_pct": a["score_pct"], "my_cpl": a["avg_cpl"],
+            "my_over_pct": a["over_pct"], "my_eval_out": a["avg_eval_out"], "my_ci": a["score_ci"],
             "rival_games": b["games"], "rival_score_pct": b["score_pct"], "rival_cpl": b["avg_cpl"],
-            "expected_pct": expected_score(a["score_pct"] / 100, a["games"], b["score_pct"] / 100, b["games"],
-                                           sum(evals) / len(evals) if evals else None),
+            "rival_over_pct": b["over_pct"], "rival_eval_out": b["avg_eval_out"], "rival_ci": b["score_ci"],
+            "eval_for_me": None if eval_me is None else round(eval_me),
+            **exp,
             # Juego peor que él esta apertura (más pérdida de centipeones): a reforzar.
             "reinforce": a["avg_cpl"] is not None and b["avg_cpl"] is not None and a["avg_cpl"] > b["avg_cpl"] + 5,
         })
@@ -138,7 +138,7 @@ def family_matchup(con: duckdb.DuckDBPyConnection, cfg: Config, me: str, rival: 
 
 
 def battle_positions(con: duckdb.DuckDBPyConnection, cfg: Config, me: str, rival: str, my_color: str,
-                     max_ply: int | None = None, min_games: int = 2) -> list[dict[str, Any]]:
+                     max_ply: int | None = None, min_games: int = 2, base: float = 0.5) -> list[dict[str, Any]]:
     """Posiciones a las que llegamos los dos, con puntaje esperado y, si me toca mover, mis opciones."""
     max_ply = max_ply or max(cfg.analysis.opening_depth_plies, 16)
     riv_color = opposite(my_color)
@@ -155,6 +155,7 @@ def battle_positions(con: duckdb.DuckDBPyConnection, cfg: Config, me: str, rival
         e = evals.get(epd, (None, None))[0]
         return None if e is None else sign * e
 
+    rival_total = max((st.n for st in rv_stats.values()), default=0)   # partidas suyas con ese color
     out = []
     for epd in shared:
         a, b = my_stats[epd], rv_stats[epd]
@@ -165,11 +166,13 @@ def battle_positions(con: duckdb.DuckDBPyConnection, cfg: Config, me: str, rival
             "fen": epd_to_fen(epd),
             "ply": min(a.ply, b.ply),
             "to_move": to_move,
-            "my_games": a.n, "my_score_pct": _pct(a.score),
-            "rival_games": b.n, "rival_score_pct": _pct(b.score),
+            "my_games": a.n, "my_score_pct": _pct(a.score), "my_ci": wilson(a.score, a.n),
+            "rival_games": b.n, "rival_score_pct": _pct(b.score), "rival_ci": wilson(b.score, b.n),
+            # Qué tan seguido llega él a esta posición con ese color.
+            "rival_reach_pct": round(100 * b.n / rival_total, 1) if rival_total else None,
             "eval_for_me": e,
             "best_san": san(epd, evals.get(epd, (None, None))[1]),
-            "expected_pct": expected_score(a.score, a.n, b.score, b.n, e),
+            **_expected(base, e, (a.residual, a.n), (b.residual, b.n)),
         }
         if to_move == "me":
             # Mis opciones: cómo me fue a mí y cómo le fue a él después de cada jugada.
@@ -180,8 +183,8 @@ def battle_positions(con: duckdb.DuckDBPyConnection, cfg: Config, me: str, rival
                     "san": m["san"], "uci": m["uci"], "my_games": m["n"], "my_score_pct": _pct(m["score"]),
                     "rival_games": after.n if after else 0, "rival_score_pct": _pct(after.score) if after else None,
                     "eval_for_me": eval_me(m["epd_after"]),
-                    "expected_pct": expected_score(m["score"], m["n"], after.score if after else None,
-                                                   after.n if after else 0, eval_me(m["epd_after"])),
+                    **_expected(base, eval_me(m["epd_after"]), (m["residual"], m["n"]),
+                                (after.residual if after else None, after.n if after else 0)),
                 })
             opts.sort(key=lambda o: o["expected_pct"], reverse=True)
             # Para recomendar una jugada hace falta algo de muestra (mía o de él después de ella).
