@@ -32,18 +32,32 @@ WRITE_BATCH = 200
 
 
 def pending_positions(con: duckdb.DuckDBPyConnection, max_ply: int,
-                      min_count: int = 1, ply_cap: int | None = None) -> list[tuple[str, int]]:
+                      min_count: int = 1, ply_cap: int | None = None,
+                      full_players: list[str] | None = None) -> list[tuple[str, int]]:
     """Posiciones (EPD, apariciones) sin evaluar dentro de los primeros `max_ply` plies.
 
+    `full_players`: jugadores cuyas partidas se analizan completas (todas las jugadas).
     Ordenadas por frecuencia: si el análisis se corta, ya está lo más útil.
     """
     limit_ply = ply_cap if ply_cap is not None else max_ply
     ply_filter = f"WHERE ply <= {int(limit_ply)}" if limit_ply else ""
+    full = ""
+    params: list[Any] = []
+    if full_players and limit_ply:
+        marks = ",".join("?" for _ in full_players)
+        full_games = f"SELECT id FROM games WHERE white IN ({marks}) OR black IN ({marks})"
+        full = f"""
+        UNION ALL
+        SELECT epd_before FROM moves WHERE ply > {int(limit_ply)} AND game_id IN ({full_games})
+        UNION ALL
+        SELECT epd_after FROM moves WHERE ply > {int(limit_ply)} AND game_id IN ({full_games})"""
+        players = [p.lower() for p in full_players]
+        params = players * 4
     sql = f"""
     WITH pos AS (
         SELECT epd_before AS epd FROM moves {ply_filter}
         UNION ALL
-        SELECT epd_after AS epd FROM moves {ply_filter}
+        SELECT epd_after AS epd FROM moves {ply_filter}{full}
     )
     SELECT p.epd, count(*) AS n
     FROM pos p LEFT JOIN evals e ON e.epd = p.epd
@@ -52,7 +66,7 @@ def pending_positions(con: duckdb.DuckDBPyConnection, max_ply: int,
     HAVING count(*) >= ?
     ORDER BY n DESC
     """
-    return con.execute(sql, [min_count]).fetchall()
+    return con.execute(sql, [*params, min_count]).fetchall()
 
 
 def epd_to_fen(epd: str) -> str:
@@ -254,7 +268,8 @@ def evaluate_pending(
     progress = progress or (lambda _d, _t: (lambda: None))
     stats = {"terminal": 0, "cloud": 0, "stockfish": 0}
 
-    pending = pending_positions(con, ecfg.max_ply)
+    full = [cfg.me] if cfg.me and ecfg.analyse_my_games_fully else None
+    pending = pending_positions(con, ecfg.max_ply, full_players=full)
     if not pending:
         return stats
 
@@ -287,7 +302,7 @@ def evaluate_pending(
             stats["cloud"] += len(batch)
 
     # 3) Stockfish para el resto.
-    remaining = [epd for epd, _ in pending_positions(con, ecfg.max_ply)]
+    remaining = [epd for epd, _ in pending_positions(con, ecfg.max_ply, full_players=full)]
     if remaining:
         path = find_stockfish(ecfg.path)
         if not path:

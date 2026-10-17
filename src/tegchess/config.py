@@ -30,6 +30,8 @@ class EngineConfig(BaseModel):
     threads_per_worker: int = 1
     hash_mb: int = 64
     max_ply: int = 30
+    # Mis partidas se analizan completas (fases, conversión, tipos de error en "Mi juego").
+    analyse_my_games_fully: bool = True
     use_cloud_eval: bool = True
     cloud_eval_max_ply: int = 16
     # La nube de Lichess es para "unas pocas posiciones": se piden solo las más repetidas y con tope.
