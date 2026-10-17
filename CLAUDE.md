@@ -40,8 +40,11 @@ Para probar sin tocar los datos del usuario: apuntar `TEGCHESS_CONFIG` a un yaml
 | `metrics.py` | equivalente Python de las macros (CPL, % de victoria, umbrales de Lichess) |
 | `analysis/scope.py` | CTE con el alcance de partidas de un jugador (modalidad, fechas, max_games) |
 | `analysis/openings.py` | resumen de aperturas, árbol de repertorio, posiciones repetidas |
-| `analysis/crossover.py` | cruce yo vs. rival: familias, posiciones compartidas, puntaje esperado |
-| `analysis/traps.py` | trampas: error habitual del rival + refutación (multipv 3) + estadística |
+| `analysis/expectation.py` | expectativa por Elo + ajustes (motor 0,6, residuo suavizado K=30), intervalos, forma |
+| `analysis/crossover.py` | cruce yo vs. rival: familias, posiciones compartidas, puntaje esperado sobre la base de Elo |
+| `analysis/prep.py` | preparación: línea principal del rival, predictibilidad, líneas para memorizar |
+| `analysis/improvement.py` | "Mi juego": áreas a mejorar ordenadas por puntos cada 100 partidas |
+| `analysis/traps.py` | trampas: error habitual + refutación (multipv 3), ordenadas por valor esperado |
 | `analysis/clock.py` | manejo del tiempo: caídas por reloj, apuros, tiempo por fase, calidad con poco reloj |
 | `analysis/lines.py` | línea para llegar a una posición, SAN, variantes numeradas |
 | `report.py` | arma el JSON del informe (+ plan de partida) y exporta HTML estático |

@@ -1,6 +1,7 @@
 # Propuesta: cómo construir el análisis y las expectativas
 
-Fecha: 2026-10-17. Estado: **propuesta, sin implementar** (falta el visto bueno del usuario).
+Fecha: 2026-10-17. Estado: **implementada** (A, B, C, D y E; ver docs/ESTADO.md). El usuario pidió no perder de
+vista la preparación específica contra un rival: por eso se sumó la pestaña "Preparación" (analysis/prep.py).
 
 ## Qué medimos (backtest con los datos reales)
 

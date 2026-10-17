@@ -15,6 +15,16 @@
   - **Plan de partida** por color: escenarios de apertura, líneas, trampas, posiciones a evitar, qué reforzar.
   - **Trampas**: error habitual del rival, refutación (fácil/precisa, forzante) y cuántas veces lo castigaron.
   - Aperturas (familia/variante), explorador de árbol, posiciones flojas (del rival y mías).
+  - **Expectativa por Elo** (yo vs. él en la modalidad común) y rendimiento sobre el Elo de cada uno, general,
+    por color, por modalidad y forma reciente. Los "esperados" de aperturas y posiciones parten de esa base y suman
+    la ventaja según el motor (peso 0,6) y el rendimiento sobre el Elo en la posición, suavizado con 30 partidas.
+    Intervalos de 90% y chips de confianza / poca muestra. Metodología y backtest: `docs/PROPUESTA_ANALISIS.md`.
+  - **Preparación**: su línea más jugada (hasta donde la probabilidad de que la siga es ≥ 25%), qué tan predecible
+    es y líneas para memorizar ordenadas por probabilidad de llegar × ventaja (`analysis/prep.py`).
+  - **Trampas** ordenadas por valor esperado: P(llega) × P(se equivoca) × ganancia × facilidad.
+  - **Mi juego**: áreas a mejorar ordenadas por puntos cada 100 partidas (reloj, aperturas, conversión, errores por
+    fase y tipo, oportunidades perdidas, tilt/sesiones, finales). Mis partidas se analizan completas
+    (`engine.analyse_my_games_fully`, ~20 min la primera vez).
   - **Tiempo**: caídas por reloj, apuros (< 10% del tiempo inicial), reloj restante por jugada, tiempo por fase,
     pensadas largas y calidad de juego con poco reloj, comparado con el mío. Las ideas salen también en el plan.
 - Interfaz local (`run.bat`), oscura estilo reproductor de música: rivales en la barra lateral, Descargar / Analizar /
@@ -29,8 +39,8 @@ Preguntas del enunciado original y cobertura:
 | 1 | Qué apertura mía conviene contra cada rival | Hecho: familias en común + posiciones compartidas con puntaje esperado |
 | 2 | Variante más floja del rival | Hecho: posiciones repetidas ordenadas por daño total |
 | 3 | Trampas que no conoce | Hecho: `analysis/traps.py` |
-| 4 | Qué reforzar yo | Hecho (básico): mis posiciones flojas que él alcanza + familias donde mi CPL > el suyo |
-| 5 | Tiempo, fases, tipos de error, duración, estilo, tendencias | **Parcial**: tiempo hecho (`analysis/clock.py`); faltan fases, tipos de error, estilo y tendencias |
+| 4 | Qué reforzar yo | Hecho: pestaña "Mi juego" (`analysis/improvement.py`) + posiciones flojas que él alcanza |
+| 5 | Tiempo, fases, tipos de error, duración, estilo, tendencias | Tiempo, forma reciente y rendimiento sobre Elo para el rival; fases, tipos de error y tendencias para mí. Falta: estilo, y fases/errores del rival (sus partidas solo se analizan hasta el ply 30) |
 
 ## Próximos pasos sugeridos
 
@@ -43,8 +53,8 @@ Preguntas del enunciado original y cobertura:
    - Tendencias: últimas N partidas vs. el histórico (aperturas nuevas, cambios de rating).
 2. **Opening explorer con token** (`explorer.lichess.org/lichess`): para cada trampa, qué tan seguido la
    castiga la gente de un rating parecido; y popularidad de las líneas recomendadas.
-3. Calidad de recomendaciones: con pocas partidas en común el plan es ruidoso. Ideas: agrupar posiciones
-   por familia de apertura, mostrar intervalos de confianza, priorizar posiciones que el rival repite.
+3. Recalibrar los pesos de `analysis/expectation.py` cuando haya más datos (el backtest está descripto en
+   `docs/PROPUESTA_ANALISIS.md`; convendría pasarlo a un módulo `analysis/calibration.py` con su test).
 4. Mejoras de interfaz: navegar variantes del motor en el tablero, filtros por modalidad o fecha en el informe.
 5. **Estudios de Lichess**: exportar el plan, las trampas y las líneas como PGN con comentarios y flechas
    (`[%cal]`), un capítulo por línea, e importarlos con `POST /api/study/{id}/import-pgn` (token con
