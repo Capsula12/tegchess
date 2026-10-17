@@ -10,57 +10,79 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">tegchess</div>
-    <label class="rival-picker">Rival
-      <select id="rival-select"></select>
-    </label>
-    <div class="spacer"></div>
-    <div class="actions server-only">
-      <button data-job="fetch" title="Descargar partidas nuevas de Lichess">Descargar</button>
-      <button data-job="analyze" title="Evaluar posiciones con Stockfish">Analizar</button>
-      <button data-job="report" title="Generar informes y HTML estático">Generar informes</button>
-      <button data-job="all" class="primary" title="Descargar, analizar y generar">Todo</button>
-    </div>
-    <button id="print-btn" title="Imprimir o guardar como PDF">PDF</button>
-  </header>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand"><span class="logo">♞</span>tegchess</div>
 
-  <div id="job-status" class="job-status hidden"></div>
+      <div class="side-block">
+        <div class="side-title">Rivales</div>
+        <ul id="rival-list" class="rival-list"></ul>
+      </div>
 
-  <main class="layout">
-    <section class="content">
+      <div class="side-block server-only">
+        <div class="side-title">Datos</div>
+        <div class="side-actions">
+          <button data-job="fetch" title="Descargar partidas nuevas de Lichess">⤓ Descargar</button>
+          <button data-job="analyze" title="Evaluar posiciones con Stockfish">⚙ Analizar</button>
+          <button data-job="report" title="Generar informes y HTML estático">▤ Generar informes</button>
+          <button data-job="all" class="primary" title="Descargar, analizar y generar">▶ Todo</button>
+        </div>
+      </div>
+
+      <div class="side-block side-bottom server-only">
+        <button data-tab="config" class="side-link">⚙ Configuración</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="hero" id="hero">
+        <div class="avatar" id="hero-avatar">♞</div>
+        <div class="hero-text">
+          <div class="eyebrow" id="hero-eyebrow">Informe de rival</div>
+          <h1 id="hero-title">tegchess</h1>
+          <div class="hero-meta" id="hero-meta"></div>
+        </div>
+        <div class="hero-actions">
+          <button id="print-btn" class="pill primary" title="Guardar informes en PDF">PDF</button>
+        </div>
+      </header>
+
       <nav class="tabs" id="tabs">
         <button data-tab="summary" class="active">Resumen</button>
         <button data-tab="plan">Plan de partida</button>
+        <button data-tab="time">Tiempo</button>
         <button data-tab="traps">Trampas</button>
         <button data-tab="openings">Aperturas</button>
         <button data-tab="tree">Explorador</button>
         <button data-tab="weak">Posiciones flojas</button>
-        <button data-tab="config" class="server-only">Configuración</button>
       </nav>
 
-      <div id="empty" class="empty hidden">
-        <h2>Todavía no hay informes</h2>
-        <p>Completá tu usuario y los rivales en <b>Configuración</b> y apretá <b>Todo</b>
-          (descarga, análisis e informe). Desde la consola: <code>tegchess fetch</code>,
-          <code>tegchess analyze</code>, <code>tegchess report</code>.</p>
-      </div>
+      <section class="content">
+        <div id="empty" class="empty hidden">
+          <h2>Todavía no hay informes</h2>
+          <p>Completá tu usuario y los rivales en <b>Configuración</b> y apretá <b>Todo</b>
+            (descarga, análisis e informe). Desde la consola: <code>tegchess fetch</code>,
+            <code>tegchess analyze</code>, <code>tegchess report</code>.</p>
+        </div>
 
-      <div class="tab" id="tab-summary"></div>
-      <div class="tab hidden" id="tab-plan"></div>
-      <div class="tab hidden" id="tab-traps"></div>
-      <div class="tab hidden" id="tab-openings"></div>
-      <div class="tab hidden" id="tab-tree"></div>
-      <div class="tab hidden" id="tab-weak"></div>
-      <div class="tab hidden server-only" id="tab-config"></div>
-    </section>
+        <div class="tab" id="tab-summary" data-title="Resumen"></div>
+        <div class="tab hidden" id="tab-plan" data-title="Plan de partida"></div>
+        <div class="tab hidden" id="tab-time" data-title="Manejo del tiempo"></div>
+        <div class="tab hidden" id="tab-traps" data-title="Trampas"></div>
+        <div class="tab hidden" id="tab-openings" data-title="Aperturas"></div>
+        <div class="tab hidden" id="tab-tree" data-title="Explorador"></div>
+        <div class="tab hidden" id="tab-weak" data-title="Posiciones flojas"></div>
+        <div class="tab hidden server-only" id="tab-config" data-title="Configuración"></div>
+      </section>
+    </main>
 
     <aside class="board-panel">
+      <div class="panel-title">Tablero</div>
       <div id="board" class="cg-wrap"></div>
       <div class="board-controls">
         <button data-nav="first" title="Inicio">⏮</button>
         <button data-nav="prev" title="Anterior (←)">◀</button>
-        <button data-nav="next" title="Siguiente (→)">▶</button>
+        <button data-nav="next" title="Siguiente (→)" class="play">▶</button>
         <button data-nav="last" title="Final">⏭</button>
         <button data-nav="flip" title="Girar tablero">⇅</button>
       </div>
@@ -71,7 +93,29 @@
         <span><i class="dot green"></i>mejor según el motor</span>
       </div>
     </aside>
-  </main>
+  </div>
+
+  <div id="job-status" class="player-bar hidden"></div>
+
+  <dialog id="pdf-dialog" class="dialog">
+    <form method="dialog" id="pdf-form">
+      <h2>Guardar en PDF</h2>
+      <p class="muted">Se genera un PDF por rival en la carpeta <code>informes/</code> del proyecto.
+        Si ya existe, se reemplaza.</p>
+      <div class="choices">
+        <label><input type="radio" name="scope" value="current" checked> Solo el rival que estoy viendo <b id="pdf-current"></b></label>
+        <label><input type="radio" name="scope" value="all"> Todos los rivales</label>
+        <label><input type="radio" name="scope" value="some"> Elegir rivales</label>
+      </div>
+      <div id="pdf-rivals" class="rival-checks"></div>
+      <div class="dialog-actions">
+        <button type="button" id="pdf-print" class="pill ghost" title="Abrir el diálogo de impresión del navegador">Imprimir este</button>
+        <span class="spacer"></span>
+        <button value="cancel" class="pill ghost">Cancelar</button>
+        <button value="ok" class="pill primary" id="pdf-ok">Generar</button>
+      </div>
+    </form>
+  </dialog>
 
   <script src="vendor/chessground.global.js"></script>
   <script src="static-data.js"></script>

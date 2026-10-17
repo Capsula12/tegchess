@@ -19,6 +19,7 @@
     lineStart: START_FEN,
     shapesAt: null,       // {idx, shapes}
     orientation: "white",
+    loadedAt: 0,          // cuándo se cargaron los informes (para recargar al terminar una tarea)
   };
 
   const $ = (sel, root = document) => root.querySelector(sel);
@@ -109,7 +110,9 @@
   }
   const report = () => state.reports[state.rival];
   const section = (who) => (who === "me" ? report().me : report().rival);
-  const whoName = (who) => (who === "me" ? `Yo (${report().meta.me})` : report().meta.rival);
+  const RNAME = () => report().meta.rival_name || report().meta.rival;
+  const MNAME = () => report().meta.me_name || report().meta.me;
+  const whoName = (who) => (who === "me" ? `Yo (${MNAME()})` : RNAME());
 
   // ---------------------------------------------------------------- Resumen
   function renderSummary() {
@@ -121,12 +124,7 @@
     const perf = p.by_perf.map((x) => `<tr><td>${esc(x.perf)}</td><td>${x.games}</td><td>${fmt(x.avg_rating)}</td>` +
       `<td class="${pctClass(x.score_pct)}">${fmt(x.score_pct)}%</td></tr>`);
     const endings = p.endings.map((x) => `<tr><td>${esc(endingName(x.status))}</td><td>${x.wins}</td><td>${x.draws}</td><td>${x.losses}</td></tr>`);
-    const m = r.meta;
     $("#tab-summary").innerHTML = `
-      <h2>${esc(m.rival)}</h2>
-      <p class="muted">Modalidades: ${esc(m.perf_types.join(", "))} · desde ${esc(m.since || "el inicio")}${m.until ? " hasta " + esc(m.until) : ""}
-        · máx. ${m.max_games || "∞"} partidas · Stockfish prof. ${m.engine_depth}, primeros ${m.analysed_plies || "todos los"} plies
-        · posiciones evaluadas: ${fmt(m.eval_coverage_pct)}% · generado ${esc(new Date(m.generated_at).toLocaleString())}</p>
       <div class="cards">
         ${card("Partidas", s.games)}
         ${card("Puntaje", fmt(s.score_pct) + "%")}
@@ -150,7 +148,7 @@
 
   function planHtml() {
     // Sin mi usuario no hay cruce: ideas a partir de las debilidades del rival solamente.
-    if (report().plan) return `<p class="muted">El plan concreto contra este rival está en la pestaña <b>Plan de partida</b>.</p>`;
+    if (report().plan) return `<p class="muted no-print">El plan concreto contra este rival está en la pestaña <b>Plan de partida</b>.</p>`;
     const r = report().rival;
     const items = [];
     ["white", "black"].forEach((c) => {
@@ -166,7 +164,7 @@
 
   // ---------------------------------------------------------------- Plan de partida
   const KIND = {
-    apertura: ["Apertura", ""], linea: ["Línea", "good"], trampa: ["Trampa", "good"],
+    tiempo: ["Tiempo", "info"], apertura: ["Apertura", ""], linea: ["Línea", "good"], trampa: ["Trampa", "good"],
     evitar: ["Evitar", "bad"], reforzar: ["Reforzar", "warn"],
   };
 
@@ -209,7 +207,7 @@
     const bHeaders = ["Posición", "Le toca", "Vos (partidas · %)", "Él (partidas · %)", "Eval.", "Esperado"];
     root.innerHTML = `
       <div class="toolbar">${seg("pc", [["white", "Yo con blancas"], ["black", "Yo con negras"]], color)}</div>
-      <p class="muted">Vos con ${colorName(color)} contra ${esc(r.meta.rival)} con ${opp}. Esperado = 40% tu puntaje +
+      <p class="muted">Vos con ${colorName(color)} contra ${esc(RNAME())} con ${opp}. Esperado = 40% tu puntaje +
         40% (100 − el de él) + 20% motor, suavizado cuando hay pocas partidas. Hacé clic para ver la línea en el tablero.</p>
       <div class="plan-list">${items.map((it, i) => `
         <div class="plan-item${it.line ? " clickable" : ""}" data-i="${i}">
@@ -240,6 +238,91 @@
     });
   }
 
+  // ---------------------------------------------------------------- Tiempo
+  const PHASES = { opening: "Apertura", middlegame: "Medio juego", endgame: "Final" };
+
+  function renderTime() {
+    const root = $("#tab-time");
+    const r = report();
+    const tp = r.rival.profile.time;
+    const mine = r.me ? r.me.profile.time : null;
+    if (!tp) {
+      root.innerHTML = '<p class="muted">Este informe es anterior al perfil de tiempo: regeneralo con <b>Generar informes</b>.</p>';
+      return;
+    }
+    const s = tp.summary;
+    const th = tp.thresholds;
+    const pct = (v) => (v === null || v === undefined ? "–" : fmt(v) + "%");
+    const hints = tp.hints.length
+      ? `<div class="hints">${tp.hints.map((h) => `<div class="hint">${esc(h)}</div>`).join("")}</div>`
+      : '<p class="muted">Nada llamativo en su manejo del reloj con los datos actuales.</p>';
+
+    // Comparación rival vs. yo, fila por métrica.
+    const metrics = [
+      ["Partidas con reloj", (x) => x.summary.games],
+      ["Derrotas por tiempo", (x) => `${x.summary.lost_on_time} <span class="muted">(${pct(x.summary.lost_on_time_of_losses_pct)} de las derrotas)</span>`],
+      ["Victorias por tiempo", (x) => x.summary.won_on_time],
+      [`Partidas con apuro (&lt; ${th.trouble_pct}% del reloj)`, (x) => pct(x.summary.trouble_pct)],
+      ["Jugada media en que se apura", (x) => fmt(x.summary.avg_trouble_move)],
+      ["Puntaje con apuro / sin apuro", (x) => `${pct(x.summary.score_in_trouble_pct)} / ${pct(x.summary.score_no_trouble_pct)}`],
+      ["Pensada más larga (% del tiempo inicial)", (x) => pct(x.summary.avg_longest_think_pct)],
+      [`Pensadas de ≥ ${th.long_think_pct}% por partida`, (x) => fmt(x.summary.long_thinks_per_game, 2)],
+    ];
+    const cols = mine ? [tp, mine] : [tp];
+    const cmpRows = metrics.map(([label, get]) => `<tr><td>${label}</td>${cols.map((x) => `<td>${get(x)}</td>`).join("")}</tr>`);
+
+    // Reloj restante en las jugadas 10/20/30/40.
+    const curve = (x) => Object.fromEntries((x.clock_curve || []).map((c) => [c.move_no, c]));
+    const cr = curve(tp), cm = mine ? curve(mine) : {};
+    const moves = [...new Set([...Object.keys(cr), ...Object.keys(cm)].map(Number))].sort((a, b) => a - b);
+    const bar = (c, cls) => c
+      ? `<div class="bar ${cls}"><span style="width:${Math.min(100, c.clock_left_pct)}%"></span></div>`
+        + `<div class="bar-val">${fmt(c.clock_left_pct)}% · ${c.games} partidas</div>`
+      : "";
+    const bars = moves.map((n) => `<div class="bar-row"><div class="lbl">Jugada ${n}</div>
+        <div class="bar-track">${bar(cr[n], "")}${bar(cm[n], "me")}</div></div>`).join("");
+
+    const phaseRows = (x) => {
+      const byPerf = {};
+      x.by_phase.forEach((p) => { (byPerf[p.perf] = byPerf[p.perf] || {})[p.phase] = p; });
+      return Object.entries(byPerf).map(([perf, ph]) => `<tr><td>${esc(perf)}</td>${Object.keys(PHASES).map((k) =>
+        `<td>${ph[k] ? `${fmt(ph[k].avg_seconds, 1)} s <span class="muted">(${fmt(ph[k].share_pct)}%)</span>` : "–"}</td>`).join("")}</tr>`);
+    };
+    const pressRows = (x) => ["normal", "low"].map((k) => {
+      const p = x.pressure[k];
+      const label = k === "low" ? `Con menos del ${th.trouble_pct}% del reloj` : "Con tiempo";
+      return p ? `<tr><td>${label}</td><td>${p.moves}</td><td>${fmt(p.error_rate_pct, 1)}%</td>
+        <td>${fmt(p.blunder_rate_pct, 1)}%</td><td>${fmt(p.avg_wp_loss, 1)}</td></tr>` : `<tr><td>${label}</td><td colspan="4" class="muted">Sin jugadas evaluadas</td></tr>`;
+    });
+    const lowMoves = tp.pressure.low ? tp.pressure.low.moves : 0;
+
+    root.innerHTML = `
+      <h3>Qué aprovechar</h3>
+      ${hints}
+      <div class="cards">
+        ${card("Derrotas por tiempo", pct(s.lost_on_time_of_losses_pct))}
+        ${card("Partidas con apuro", pct(s.trouble_pct))}
+        ${card("Se apura en la jugada", fmt(s.avg_trouble_move))}
+        ${card("Pensada más larga", pct(s.avg_longest_think_pct))}
+      </div>
+      <h3>${esc(RNAME())}${mine ? " vs. vos" : ""}</h3>
+      ${table(["", esc(RNAME()), ...(mine ? ["Vos"] : [])], cmpRows)}
+      <h3>Reloj que le queda</h3>
+      <p class="muted">Porcentaje medio del tiempo inicial que le queda al jugar esa jugada (con incremento puede pasar del 100%).</p>
+      <div class="bars">
+        ${mine ? `<div class="legend-inline"><span><i style="background:var(--accent)"></i>${esc(RNAME())}</span><span><i style="background:var(--me)"></i>Vos</span></div>` : ""}
+        ${bars || '<span class="muted">Sin datos de reloj.</span>'}
+      </div>
+      <h3>Tiempo por fase</h3>
+      <p class="muted">Segundos medios por jugada y, entre paréntesis, qué parte de su tiempo usa en cada fase
+        (fases según la división de Lichess).</p>
+      ${table(["Modalidad", ...Object.values(PHASES)], phaseRows(tp))}
+      <h3>Calidad de juego con poco reloj</h3>
+      <p class="muted">Solo cuentan las jugadas con evaluación del motor (las primeras ${r.meta.analysed_plies || "todas las"} jugadas
+        o partidas analizadas en Lichess)${lowMoves < 30 ? ". <b>Hay pocas jugadas evaluadas con poco reloj</b>: tomalo como orientativo" : ""}.</p>
+      ${table(["", "Jugadas", "Errores", "Errores graves", "Pérdida media (pts)"], pressRows(tp))}`;
+  }
+
   // ---------------------------------------------------------------- Trampas
   function renderTraps() {
     const root = $("#tab-traps");
@@ -264,7 +347,7 @@
       </div>`);
     root.innerHTML = `
       <div class="toolbar">${report().me ? seg("tm", [["all", "Todas"], ["mine", "Solo en mi repertorio"]], onlyMine ? "mine" : "all") : ""}</div>
-      <p class="muted">Posiciones que ${esc(report().meta.rival)} repite donde su jugada habitual es un error según el motor.
+      <p class="muted">Posiciones que ${esc(RNAME())} repite donde su jugada habitual es un error según el motor.
         "Fácil": la refutación es forzante o hay varias jugadas que ganan; "precisa": hay una sola. Clic: el tablero muestra
         la posición tras su error con la refutación en verde (→ para seguir la variante).</p>
       <div class="weak-list">${items.join("") || '<p class="muted">No se encontraron trampas con los datos actuales.</p>'}</div>`;
@@ -295,7 +378,7 @@
     const headers = ["Apertura", "Partidas", "G / T / P", "Puntaje", "Elo rival", "CPL apertura", "Eval. ply 20"];
     root.innerHTML = `
       <div class="toolbar">
-        ${report().me ? seg("who", [["rival", report().meta.rival], ["me", "Yo"]], who) : ""}
+        ${report().me ? seg("who", [["rival", RNAME()], ["me", "Yo"]], who) : ""}
         ${seg("by", [["family", "Por familia"], ["detail", "Por variante"]], state.openingsBy)}
       </div>
       <p class="muted">CPL apertura: pérdida media de centipeones en los primeros 20 plies (menos es mejor).
@@ -332,7 +415,7 @@
         <td class="${pctClass(c.score_pct)}">${fmt(c.score_pct)}%</td><td>${fmt(c.avg_cpl)}</td></tr>`);
     root.innerHTML = `
       <div class="toolbar">
-        ${report().me ? seg("tw", [["rival", report().meta.rival], ["me", "Yo"]], who) : ""}
+        ${report().me ? seg("tw", [["rival", RNAME()], ["me", "Yo"]], who) : ""}
         ${seg("tc", [["white", "Con blancas"], ["black", "Con negras"]], state.tree.color)}
       </div>
       <p class="muted">Partidas de ${esc(whoName(who))} con ${colorName(state.tree.color)}. Puntaje desde su punto de vista;
@@ -369,7 +452,7 @@
         <div class="line">${esc(w.line.map((m) => m.san).join(" "))}</div>
       </div>`);
     root.innerHTML = `
-      <div class="toolbar">${report().me ? seg("ww", [["rival", report().meta.rival], ["me", "Yo"]], who) : ""}</div>
+      <div class="toolbar">${report().me ? seg("ww", [["rival", RNAME()], ["me", "Yo"]], who) : ""}</div>
       <p class="muted">Posiciones que ${esc(whoName(who))} repite al menos ${3} veces, ordenadas por daño total
         (pérdida media de % de victoria × apariciones). Rojo: su jugada habitual; verde: la del motor.</p>
       <div class="weak-list">${items.join("") || '<p class="muted">Sin posiciones con evaluación todavía (corré el análisis).</p>'}</div>`;
@@ -438,28 +521,49 @@
     });
   }
 
-  async function startJob(action) {
+  async function startJob(action, users = null) {
     try {
-      await api("/api/jobs", { method: "POST", body: JSON.stringify({ action }) });
+      await api("/api/jobs", { method: "POST", body: JSON.stringify({ action, users }) });
+      jobDismissed = false;
       pollJob();
     } catch (err) {
       alert(err.message);
     }
   }
 
+  const JOB_NAMES = { fetch: "Descarga", analyze: "Análisis", report: "Informes", all: "Todo", pdf: "PDF" };
+  let jobDismissed = false;
+
   async function pollJob() {
     const s = await api("/api/jobs");
     const box = $("#job-status");
     $$("[data-job]").forEach((b) => (b.disabled = s.running));
-    if (!s.action) return box.classList.add("hidden");
-    box.classList.remove("hidden");
-    const steps = s.steps.map((st) => `<div class="step"><span>${esc(st.desc)}</span>` +
-      (st.total ? `<progress max="${st.total}" value="${Math.min(st.done, st.total)}"></progress>` : "") +
-      `<span class="muted">${st.done}${st.total ? " / " + st.total : ""}</span></div>`).join("");
-    const head = s.running ? `Trabajando (${esc(s.action)})…` : s.error ? "La tarea falló" : "Listo ✔";
-    box.innerHTML = `<b>${head}</b>${steps}${s.error ? `<pre>${esc(s.error)}</pre>` : ""}`;
+    $("#pdf-ok").disabled = s.running;
+    const show = s.action && !(jobDismissed && !s.running);
+    box.classList.toggle("hidden", !show);
+    document.body.classList.toggle("has-player", !!show);
+    if (!show) return;
+    const cur = s.steps[s.steps.length - 1];
+    const name = JOB_NAMES[s.action] || s.action;
+    const head = s.running ? `${name}: trabajando…` : s.error ? `${name}: falló` : `${name}: listo`;
+    let sub = cur ? cur.desc : "Arrancando…";
+    if (!s.running && !s.error && s.action === "pdf" && s.result && s.result.pdf) {
+      const ok = Object.values(s.result.pdf).filter((v) => v.ok).length;
+      const bad = Object.entries(s.result.pdf).filter(([, v]) => !v.ok);
+      sub = `${ok} PDF en ${s.result.pdf_dir}` + (bad.length ? ` · con error: ${bad.map(([k, v]) => `${k} (${v.error})`).join(", ")}` : "");
+    }
+    const pctDone = cur && cur.total ? Math.min(100, (100 * cur.done) / cur.total) : (s.running ? 0 : 100);
+    box.className = "player-bar" + (s.error ? " error" : !s.running ? " done" : "");
+    box.innerHTML = `
+      <div><div class="job-head">${esc(head)}</div><div class="job-sub" title="${esc(sub)}">${esc(sub)}</div></div>
+      ${s.error
+        ? `<div class="job-error" title="${esc(s.error)}">${esc(s.error.split("\n")[0])}</div>`
+        : `<div class="job-progress"><span>${cur ? cur.done : 0}</span><div class="track"><span style="width:${pctDone}%"></span></div>
+           <span>${cur && cur.total ? cur.total : ""}</span></div>`}
+      <button class="close" title="Ocultar" ${s.running ? "disabled" : ""}>✕</button>`;
+    $(".close", box).addEventListener("click", () => { jobDismissed = true; pollJob(); });
     if (s.running) setTimeout(pollJob, 1000);
-    else if (!s.error && ["report", "all"].includes(s.action)) loadReports();
+    else if (!s.error && ["report", "all"].includes(s.action) && state.loadedAt < s.finished_at) loadReports();
   }
 
   async function api(url, opts = {}) {
@@ -472,54 +576,157 @@
     return res.json();
   }
 
+  // ---------------------------------------------------------------- PDF
+  const rivalName = (rv) => (state.reports[rv] && state.reports[rv].meta.rival_name) || rv;
+
+  function renderAllForPrint() {
+    // Para el PDF se imprimen todas las secciones (renderizadas) una tras otra.
+    if (!report()) return;
+    renderHero(); renderSummary(); renderPlan(); renderTime(); renderTraps(); renderOpenings(); renderWeak();
+  }
+
+  function openPdfDialog() {
+    if (!SERVER) { renderAllForPrint(); window.print(); return; }
+    const dlg = $("#pdf-dialog");
+    const rivals = Object.keys(state.reports);
+    $("#pdf-current").textContent = state.rival ? `(${rivalName(state.rival)})` : "";
+    $("#pdf-rivals").innerHTML = rivals.map((rv) =>
+      `<label><input type="checkbox" value="${esc(rv)}" ${rv === state.rival ? "checked" : ""}> ${esc(rivalName(rv))}</label>`).join("");
+    const sync = () => $("#pdf-rivals").classList.toggle("disabled", $("#pdf-form").scope.value !== "some");
+    $$('input[name="scope"]', dlg).forEach((r) => (r.onchange = sync));
+    sync();
+    dlg.showModal();
+  }
+
+  $("#pdf-dialog").addEventListener("close", () => {
+    const dlg = $("#pdf-dialog");
+    if (dlg.returnValue !== "ok") return;
+    const scope = $("#pdf-form").scope.value;
+    const users = scope === "current" ? [state.rival]
+      : scope === "all" ? Object.keys(state.reports)
+      : $$("#pdf-rivals input:checked").map((c) => c.value);
+    if (!users.length || !users[0]) return alert("Elegí al menos un rival.");
+    startJob("pdf", users);
+  });
+  $("#pdf-print").addEventListener("click", () => {
+    $("#pdf-dialog").close("cancel");
+    renderAllForPrint();
+    window.print();
+  });
+
   // ---------------------------------------------------------------- navegación
+  function hueOf(name) {
+    let h = 0;
+    for (const ch of String(name)) h = (h * 31 + ch.charCodeAt(0)) % 360;
+    return h;
+  }
+  const rivalColor = (name, l = 38) => `hsl(${hueOf(name)}, 45%, ${l}%)`;
+
+  function renderHero() {
+    const hero = $("#hero");
+    if (state.tab === "config") {
+      hero.style.setProperty("--hero", "#3a3a3a");
+      $("#hero-avatar").textContent = "⚙";
+      $("#hero-eyebrow").textContent = "tegchess";
+      $("#hero-title").textContent = "Configuración";
+      $("#hero-meta").textContent = "Usuarios, modalidades y motor. Los cambios se usan en la próxima descarga o análisis.";
+      return;
+    }
+    const r = report();
+    if (!r) {
+      hero.style.setProperty("--hero", "#2d5a43");
+      $("#hero-avatar").textContent = "♞";
+      $("#hero-eyebrow").textContent = "Preparación de rivales";
+      $("#hero-title").textContent = "tegchess";
+      $("#hero-meta").textContent = "";
+      return;
+    }
+    const m = r.meta;
+    const s = r.rival.profile.summary;
+    const name = m.rival_name || m.rival;
+    hero.style.setProperty("--hero", rivalColor(m.rival));
+    $("#hero-avatar").textContent = name.slice(0, 1).toUpperCase();
+    $("#hero-eyebrow").textContent = m.me ? `Informe de rival · preparado para ${m.me_name || m.me}` : "Informe de rival";
+    $("#hero-title").textContent = name;
+    $("#hero-meta").innerHTML = `<b>${s.games} partidas</b> · rating ${fmt(s.last_rating)} · ${esc(m.perf_types.join(", "))}
+      · desde ${esc(m.since || "el inicio")}${m.until ? " hasta " + esc(m.until) : ""} · máx. ${m.max_games || "∞"} partidas<br>
+      Stockfish prof. ${m.engine_depth}, primeros ${m.analysed_plies || "todos los"} plies · posiciones evaluadas ${fmt(m.eval_coverage_pct)}%
+      · generado ${esc(new Date(m.generated_at).toLocaleString())}`;
+    document.title = `${name} · tegchess`;
+  }
+
+  function renderRivalList() {
+    const rivals = Object.keys(state.reports);
+    $("#rival-list").innerHTML = rivals.map((rv) => {
+      const s = state.reports[rv].rival.profile.summary;
+      const name = rivalName(rv);
+      return `<li data-rival="${esc(rv)}" class="${rv === state.rival && state.tab !== "config" ? "active" : ""}">
+        <span class="r-avatar" style="--c:${rivalColor(rv)}">${esc(name.slice(0, 1).toUpperCase())}</span>
+        <span style="min-width:0"><div class="r-name">${esc(name)}</div>
+          <div class="r-sub">${s.games} partidas · ${fmt(s.last_rating)}</div></span></li>`;
+    }).join("") || '<li class="muted" style="cursor:default">Sin informes todavía</li>';
+    $$("#rival-list li[data-rival]").forEach((li) => li.addEventListener("click", () => {
+      state.rival = li.dataset.rival;
+      state.tree.path = [];
+      if (state.tab === "config") showTab("summary"); else { renderRivalList(); renderTab(); }
+      $(".main").scrollTop = 0;
+    }));
+  }
+
   function showTab(tab) {
     state.tab = tab;
-    $$("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+    $$("[data-tab]").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
     $$(".tab").forEach((t) => t.classList.toggle("hidden", t.id !== "tab-" + tab));
+    $("#tabs").classList.toggle("hidden", tab === "config");
+    renderRivalList();
     renderTab();
   }
 
   function renderTab() {
     const hasReport = !!(state.rival && report());
+    renderHero();
+    $("#print-btn").classList.toggle("hidden", !hasReport || state.tab === "config");
     $("#empty").classList.toggle("hidden", hasReport || state.tab === "config");
     if (state.tab === "config") return renderConfig();
     $$(".tab").forEach((t) => { if (!hasReport && t.id !== "tab-config") t.innerHTML = ""; });
     if (!hasReport) return;
-    ({ summary: renderSummary, plan: renderPlan, traps: renderTraps, openings: renderOpenings, tree: renderTree, weak: renderWeak })[state.tab]();
+    ({ summary: renderSummary, plan: renderPlan, time: renderTime, traps: renderTraps, openings: renderOpenings,
+      tree: renderTree, weak: renderWeak })[state.tab]();
   }
 
-  async function loadReports() {
+  async function loadReports(only = null) {
     let rivals = [];
     if (STATIC) {
       state.reports = STATIC;
       rivals = Object.keys(STATIC);
     } else if (SERVER) {
-      rivals = (await api("/api/reports")).map((r) => r.rival);
-      await Promise.all(rivals.map(async (r) => { state.reports[r] = await api("/api/reports/" + encodeURIComponent(r)); }));
+      rivals = only ? [only] : (await api("/api/reports")).map((r) => r.rival);
+      const loaded = {};
+      await Promise.all(rivals.map(async (r) => { loaded[r] = await api("/api/reports/" + encodeURIComponent(r)); }));
+      state.reports = Object.fromEntries(rivals.map((r) => [r, loaded[r]]));
+      state.loadedAt = Date.now() / 1000;
     }
-    const sel = $("#rival-select");
-    sel.innerHTML = rivals.map((r) => `<option value="${esc(r)}">${esc(r)}</option>`).join("");
     if (!rivals.includes(state.rival)) state.rival = rivals[0] || null;
-    if (state.rival) sel.value = state.rival;
+    renderRivalList();
     renderTab();
   }
 
-  $("#rival-select").addEventListener("change", (e) => {
-    state.rival = e.target.value;
-    state.tree.path = [];
-    renderTab();
-  });
-  $$("#tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+  $$("[data-tab]").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
   $$("[data-job]").forEach((b) => b.addEventListener("click", () => startJob(b.dataset.job)));
-  $("#print-btn").addEventListener("click", () => {
-    // Para el PDF se imprimen todas las secciones (renderizadas) una tras otra.
-    if (report()) { renderSummary(); renderPlan(); renderTraps(); renderOpenings(); renderWeak(); }
-    window.print();
-  });
+  $("#print-btn").addEventListener("click", openPdfDialog);
 
+  // Modo impresión (lo usa la generación de PDF): ?print=<rival> muestra todas las secciones de ese rival.
+  const PRINT = new URLSearchParams(location.search).get("print");
   if (!SERVER) $$(".server-only").forEach((el) => el.classList.add("hidden"));
   setLine([]);
-  loadReports();
-  if (SERVER) pollJob();
+  if (PRINT) {
+    state.rival = PRINT.toLowerCase();
+    loadReports(STATIC ? null : state.rival).then(() => {
+      renderAllForPrint();
+      document.body.dataset.ready = "1";
+    });
+  } else {
+    loadReports();
+    if (SERVER) pollJob();
+  }
 })();
