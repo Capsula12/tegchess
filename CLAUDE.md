@@ -14,7 +14,7 @@ Etapa 2 (futura): web app de práctica de repertorio con repetición espaciada. 
 - Docs, mensajes de commit y textos de la interfaz **en español** (rioplatense: "vos"); nombres de código en inglés.
 - Commits chicos y descriptivos, en una rama (no directo a `main`). **No hacer push sin que lo pida.**
 - Ante algo ambiguo que cambie el diseño: preguntar antes. Detalles menores: decidir y contarlo.
-- Datos, token y config fuera del repo (`data/`, `.env`, `config.yaml` están en `.gitignore`).
+- Datos, token y config fuera del repo (`data/`, `.env`, `config.yaml` e `informes/*.pdf` están en `.gitignore`).
 
 ## Comandos
 
@@ -42,8 +42,10 @@ Para probar sin tocar los datos del usuario: apuntar `TEGCHESS_CONFIG` a un yaml
 | `analysis/openings.py` | resumen de aperturas, árbol de repertorio, posiciones repetidas |
 | `analysis/crossover.py` | cruce yo vs. rival: familias, posiciones compartidas, puntaje esperado |
 | `analysis/traps.py` | trampas: error habitual del rival + refutación (multipv 3) + estadística |
+| `analysis/clock.py` | manejo del tiempo: caídas por reloj, apuros, tiempo por fase, calidad con poco reloj |
 | `analysis/lines.py` | línea para llegar a una posición, SAN, variantes numeradas |
 | `report.py` | arma el JSON del informe (+ plan de partida) y exporta HTML estático |
+| `pdf.py` | PDF por rival en `informes/` con Edge/Chrome headless (`?print=<rival>`) |
 | `pipeline.py` | pasos compartidos por CLI y servidor |
 | `server.py` | FastAPI: informes, config, tareas largas con progreso (una a la vez) |
 | `web/` | HTML + JS vanilla sin build; chessground convertido a script clásico |
