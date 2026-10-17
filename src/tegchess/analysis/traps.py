@@ -5,6 +5,10 @@ mucho según el motor, se mide qué tan fácil es castigarla:
 - Motor (multipv 3 en la posición tras su error): si la refutación es una jugada única
   ("precisa") o hay varias que ganan ("fácil"); si es forzante (captura o jaque).
 - Empírico: en sus partidas, cuántas veces el rival encontró la refutación y cómo le fue.
+
+Se ordenan por valor esperado: P(llega a la posición con ese color) × P(juega el error) × lo que gano
+al castigarlo (puntos de % de victoria, con el peso práctico del motor de expectation.py). Saber la
+refutación de memoria vale más si es "precisa", pero igual cuenta un poco menos que una fácil.
 """
 
 from __future__ import annotations
@@ -15,6 +19,7 @@ from typing import Any
 import chess
 import duckdb
 
+from tegchess.analysis.expectation import ENGINE_WEIGHT
 from tegchess.analysis.lines import extend_line, line_to_position, pv_san, san
 from tegchess.analysis.openings import repeated_positions
 from tegchess.analysis.scope import scope_cte
@@ -25,6 +30,8 @@ from tegchess.metrics import eval_cp, win_pct
 MIN_LOSS = 8.0          # pérdida mínima (puntos de % de victoria) de su jugada habitual
 ONLY_MOVE_GAP = 10.0    # si la 2ª mejor respuesta gana 10 puntos menos, la refutación es "precisa"
 CANDIDATES = 300
+EASE = {"fácil": 1.0, "precisa": 0.8}
+IN_REPERTOIRE_BONUS = 1.5   # si ya llego a esa posición en mis partidas, es más probable provocarla
 
 
 def _after_epd(con: duckdb.DuckDBPyConnection, epd: str, uci: str) -> str | None:
@@ -95,6 +102,9 @@ def find_traps(con: duckdb.DuckDBPyConnection, cfg: Config, rival: str, me: str 
     if changed:
         cands = candidates()
 
+    cte, params = scope_cte(cfg, rival)
+    games_by_color = dict(con.execute(f"WITH {cte} SELECT color, count(*) FROM scope GROUP BY 1", params).fetchall())
+
     traps = []
     for r in cands:
         epd, usual = r["epd"], r["usual_uci"]
@@ -117,6 +127,11 @@ def find_traps(con: duckdb.DuckDBPyConnection, cfg: Config, rival: str, me: str 
 
         emp = _empirical(con, cfg, rival, epd, usual, refutation)
         my_games = _my_reach(con, cfg, me, epd, punisher) if me else 0
+
+        reach = r["occurrences"] / games_by_color.get(r["color"], 0) if games_by_color.get(r["color"]) else 0
+        err = r["usual_count"] / r["occurrences"]
+        difficulty = "fácil" if forcing or not only_move else "precisa"
+        gain = ENGINE_WEIGHT * (r["usual_wp_loss"] or 0)
 
         line = line_to_position(con, epd)
         pv_moves = (lines[0].get("pv") or refutation).split()
@@ -142,7 +157,12 @@ def find_traps(con: duckdb.DuckDBPyConnection, cfg: Config, rival: str, me: str 
             "forcing": forcing,
             "only_move": only_move,
             "winning_moves": winning_moves,
-            "difficulty": "fácil" if forcing or not only_move else "precisa",
+            "difficulty": difficulty,
+            "reach_pct": round(100 * min(1.0, reach), 1),
+            "error_pct": round(100 * err, 1),
+            "gain_pct": round(gain, 1),
+            # Puntos de % que suma, en promedio, tener preparada esta trampa para una partida contra él.
+            "expected_value_pct": round(min(1.0, reach) * err * gain * EASE[difficulty], 2),
             **emp,
             "my_games": my_games,
             "in_my_repertoire": my_games > 0,
@@ -151,9 +171,7 @@ def find_traps(con: duckdb.DuckDBPyConnection, cfg: Config, rival: str, me: str 
         })
 
     def priority(t: dict[str, Any]) -> float:
-        easy = 1.5 if t["difficulty"] == "fácil" else 1.0
-        mine = 2.0 if t["in_my_repertoire"] else 1.0
-        return t["usual_count"] * t["usual_wp_loss"] * easy * mine
+        return t["expected_value_pct"] * (IN_REPERTOIRE_BONUS if t["in_my_repertoire"] else 1.0)
 
     traps.sort(key=priority, reverse=True)
     return traps[:limit]
