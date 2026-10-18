@@ -15,14 +15,18 @@
       <div class="brand"><span class="logo">♞</span>tegchess</div>
 
       <div class="side-block">
-        <div class="side-title">Rivales</div>
+        <div class="side-title">Rivales <span id="source-chip" class="source-chip server-only"></span></div>
+        <div class="rival-search server-only">
+          <input id="rival-search" type="search" placeholder="Buscar y agregar rival…" autocomplete="off">
+          <div id="search-results" class="search-results hidden"></div>
+        </div>
         <ul id="rival-list" class="rival-list"></ul>
       </div>
 
       <div class="side-block server-only">
         <div class="side-title">Datos</div>
         <div class="side-actions">
-          <button data-job="fetch" title="Descargar partidas nuevas de Lichess">⤓ Descargar</button>
+          <button data-job="fetch" id="fetch-btn" title="Descargar partidas nuevas de Lichess">⤓ Descargar</button>
           <button data-job="analyze" title="Evaluar posiciones con Stockfish">⚙ Analizar</button>
           <button data-job="report" title="Generar informes y HTML estático">▤ Generar informes</button>
           <button data-job="all" class="primary" title="Descargar, analizar y generar">▶ Todo</button>

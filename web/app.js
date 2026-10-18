@@ -20,6 +20,7 @@
     shapesAt: null,       // {idx, shapes}
     orientation: "white",
     loadedAt: 0,          // cuándo se cargaron los informes (para recargar al terminar una tarea)
+    status: null,         // /api/status: modo (lichess | pgn), yo, rivales
   };
 
   const $ = (sel, root = document) => root.querySelector(sel);
@@ -114,6 +115,10 @@
   const ciTitle = (x) => (x ? ` title="Intervalo de 90%: ${x[0]}–${x[1]}%"` : "");
   const lowSample = (n) => (n < 10 ? ' <span class="badge warn" title="Con menos de 10 partidas el porcentaje es poco confiable">poca muestra</span>' : "");
   const report = () => state.reports[state.rival];
+  function debounce(fn, ms) {
+    let t = null;
+    return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+  }
   const section = (who) => (who === "me" ? report().me : report().rival);
   const RNAME = () => report().meta.rival_name || report().meta.rival;
   const MNAME = () => report().meta.me_name || report().meta.me;
@@ -644,11 +649,28 @@
     const cfg = await api("/api/config");
     const status = await api("/api/status");
     const perfs = ["bullet", "blitz", "rapid", "classical", "correspondence"];
+    const pgn = cfg.pgn || { folder: "pgn", me: "", opponents: [] };
     root.innerHTML = `
       <form class="config" id="config-form">
         <p class="muted">Stockfish: ${status.stockfish ? esc(status.stockfish) : "<b>no encontrado</b>"} ·
           token de Lichess: ${status.token ? "sí" : "no (opcional, va en .env)"}</p>
-        <label>Mi usuario de Lichess <input name="me" value="${esc(cfg.me)}" required></label>
+        <div><div class="muted">Origen de las partidas</div>
+          <div class="source-toggle">
+            <label><input type="radio" name="source" value="lichess" ${cfg.source !== "pgn" ? "checked" : ""}> Lichess</label>
+            <label><input type="radio" name="source" value="pgn" ${cfg.source === "pgn" ? "checked" : ""}> Archivos PGN</label>
+          </div></div>
+        <fieldset data-for="pgn"><legend>Archivos PGN (p.ej. exportados de ChessBase)</legend>
+          <p class="muted" style="margin:0">Copiá los PGN en la carpeta y tocá <b>Importar PGN</b>: se usan todas las partidas
+            que haya ahí (si sacás un archivo, se sacan sus partidas). Después buscá a tus rivales en la barra lateral.</p>
+          <label>Carpeta <input name="pgn_folder" value="${esc(pgn.folder)}"></label>
+          <span class="muted" style="font-size:12px">Ruta completa: ${esc(status.pgn_folder || "")}</span>
+          <label>Mi nombre en los PGN (como figura, p.ej. "Apellido, Nombre")
+            <input name="pgn_me" value="${esc(pgn.me)}" list="pgn-me-list" autocomplete="off"></label>
+          <datalist id="pgn-me-list"></datalist>
+          <label>Rivales (uno por línea; también se agregan desde el buscador) <textarea name="pgn_opponents" rows="4">${esc(pgn.opponents.join("\n"))}</textarea></label>
+        </fieldset>
+        <fieldset data-for="lichess"><legend>Lichess</legend>
+        <label>Mi usuario de Lichess <input name="me" value="${esc(cfg.me)}"></label>
         <label>Rivales (uno por línea) <textarea name="opponents" rows="5">${esc(cfg.opponents.join("\n"))}</textarea></label>
         <div><div class="muted">Modalidades</div><div class="checks">
           ${perfs.map((p) => `<label><input type="checkbox" name="perf" value="${p}" ${cfg.download.perf_types.includes(p) ? "checked" : ""}> ${p}</label>`).join("")}
@@ -659,6 +681,7 @@
           <label>Hasta <input type="date" name="until" value="${cfg.download.until ?? ""}"></label>
           <label class="checks"><input type="checkbox" name="rated_only" ${cfg.download.rated_only ? "checked" : ""}> Solo rated</label>
         </div>
+        </fieldset>
         <div class="row">
           <label>Profundidad Stockfish <input type="number" name="depth" min="6" max="30" value="${cfg.engine.depth}"></label>
           <label>Analizar hasta el ply (0 = todo) <input type="number" name="max_ply" min="0" value="${cfg.engine.max_ply}"></label>
@@ -667,12 +690,25 @@
         </div>
         <div><button class="primary" type="submit">Guardar</button> <span id="config-msg" class="muted"></span></div>
       </form>`;
-    $("#config-form").addEventListener("submit", async (e) => {
+    const form = $("#config-form");
+    const syncSource = () => $$("fieldset[data-for]", form).forEach((fs) =>
+      fs.classList.toggle("hidden", fs.dataset.for !== form.source.value));
+    $$('input[name="source"]', form).forEach((r) => r.addEventListener("change", syncSource));
+    syncSource();
+    form.pgn_me.addEventListener("input", debounce(async () => {
+      const res = await api("/api/players?limit=10&q=" + encodeURIComponent(form.pgn_me.value));
+      $("#pgn-me-list").innerHTML = res.map((p) => `<option value="${esc(p.name)}">${p.games} partidas</option>`).join("");
+    }, 250));
+    form.addEventListener("submit", async (e) => {
       e.preventDefault();
       const f = new FormData(e.target);
       const num = (v) => (v === "" || v === null ? null : Number(v));
+      cfg.source = f.get("source");
       cfg.me = f.get("me").trim();
       cfg.opponents = f.get("opponents").split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
+      // En los PGN los nombres llevan coma y espacios: uno por línea.
+      cfg.pgn = { folder: f.get("pgn_folder").trim() || "pgn", me: f.get("pgn_me").trim(),
+        opponents: f.get("pgn_opponents").split("\n").map((s) => s.trim()).filter(Boolean) };
       cfg.download.perf_types = f.getAll("perf");
       cfg.download.max_games = num(f.get("max_games"));
       cfg.download.since = f.get("since") || null;
@@ -685,6 +721,7 @@
       try {
         await api("/api/config", { method: "PUT", body: JSON.stringify(cfg) });
         $("#config-msg").textContent = "Guardado.";
+        await loadReports();
       } catch (err) {
         $("#config-msg").textContent = "Error: " + err.message;
       }
@@ -701,7 +738,7 @@
     }
   }
 
-  const JOB_NAMES = { fetch: "Descarga", analyze: "Análisis", report: "Informes", all: "Todo", pdf: "PDF" };
+  const JOB_NAMES = { fetch: "Descarga / importación", analyze: "Análisis", report: "Informes", all: "Todo", pdf: "PDF" };
   let jobDismissed = false;
 
   async function pollJob() {
@@ -717,6 +754,13 @@
     const name = JOB_NAMES[s.action] || s.action;
     const head = s.running ? `${name}: trabajando…` : s.error ? `${name}: falló` : `${name}: listo`;
     let sub = cur ? cur.desc : "Arrancando…";
+    if (!s.running && !s.error && s.action === "fetch" && s.result && s.result.fetch && s.result.fetch.pgn) {
+      const sm = s.result.fetch.pgn;
+      const files = Object.values(sm.files);
+      const imported = files.filter((v) => typeof v === "number").reduce((a, b) => a + b, 0);
+      sub = `${files.length} archivos · ${imported} partidas nuevas · ${sm.players} jugadores` +
+        (sm.removed.length ? ` · ${sm.removed.length} archivos quitados` : "");
+    }
     if (!s.running && !s.error && s.action === "pdf" && s.result && s.result.pdf) {
       const ok = Object.values(s.result.pdf).filter((v) => v.ok).length;
       const bad = Object.entries(s.result.pdf).filter(([, v]) => !v.ok);
@@ -733,7 +777,7 @@
       <button class="close" title="Ocultar" ${s.running ? "disabled" : ""}>✕</button>`;
     $(".close", box).addEventListener("click", () => { jobDismissed = true; pollJob(); });
     if (s.running) setTimeout(pollJob, 1000);
-    else if (!s.error && ["report", "all"].includes(s.action) && state.loadedAt < s.finished_at) loadReports();
+    else if (!s.error && ["report", "all", "fetch"].includes(s.action) && state.loadedAt < s.finished_at) loadReports();
   }
 
   async function api(url, opts = {}) {
@@ -821,23 +865,51 @@
     $("#hero-title").textContent = name;
     const b = r.base;
     $("#hero-meta").innerHTML = (b ? `<span class="hero-expect">Por Elo esperás <b>${fmt(b.expected_pct)}%</b> · vos ${b.my_rating} vs. ${b.rival_rating} en ${esc(b.perf)}</span><br>` : "") +
-      `<b>${s.games} partidas</b> · rating ${fmt(s.last_rating)} · ${esc(m.perf_types.join(", "))}
-      · desde ${esc(m.since || "el inicio")}${m.until ? " hasta " + esc(m.until) : ""} · máx. ${m.max_games || "∞"} partidas<br>
+      `<b>${s.games} partidas</b> · rating ${fmt(s.last_rating)} · ` + (m.source === "pgn"
+        ? "todas las partidas de los archivos PGN<br>"
+        : `${esc(m.perf_types.join(", "))} · desde ${esc(m.since || "el inicio")}${m.until ? " hasta " + esc(m.until) : ""}
+      · máx. ${m.max_games || "∞"} partidas<br>`) +
+      `
       Stockfish prof. ${m.engine_depth}, primeros ${m.analysed_plies || "todos los"} plies · posiciones evaluadas ${fmt(m.eval_coverage_pct)}%
       · generado ${esc(new Date(m.generated_at).toLocaleString())}`;
     document.title = `${name} · tegchess`;
   }
 
+  // Rivales de la barra lateral: los elegidos en la configuración (con o sin informe) y los informes que haya.
+  function rivalEntries() {
+    const st = state.status;
+    const entries = [];
+    const seen = new Set();
+    if (st) {
+      st.opponents.forEach((name, i) => {
+        const key = st.opponent_keys[i];
+        if (seen.has(key)) return;
+        seen.add(key);
+        entries.push({ key, name: state.reports[key] ? rivalName(key) : name, removable: name });
+      });
+    }
+    Object.keys(state.reports).forEach((key) => {
+      if (!seen.has(key)) { seen.add(key); entries.push({ key, name: rivalName(key), removable: null }); }
+    });
+    return entries;
+  }
+
   function renderRivalList() {
-    const rivals = Object.keys(state.reports);
-    $("#rival-list").innerHTML = rivals.map((rv) => {
-      const s = state.reports[rv].rival.profile.summary;
-      const name = rivalName(rv);
-      return `<li data-rival="${esc(rv)}" class="${rv === state.rival && state.tab !== "config" ? "active" : ""}">
-        <span class="r-avatar" style="--c:${rivalColor(rv)}">${esc(name.slice(0, 1).toUpperCase())}</span>
-        <span style="min-width:0"><div class="r-name">${esc(name)}</div>
-          <div class="r-sub">${s.games} partidas · ${fmt(s.last_rating)}</div></span></li>`;
-    }).join("") || '<li class="muted" style="cursor:default">Sin informes todavía</li>';
+    const entries = rivalEntries();
+    $("#rival-list").innerHTML = entries.map((e) => {
+      const r = state.reports[e.key];
+      const s = r ? r.rival.profile.summary : null;
+      return `<li data-rival="${esc(e.key)}" class="${e.key === state.rival && state.tab !== "config" ? "active" : ""}${r ? "" : " no-report"}">
+        <span class="r-avatar" style="--c:${rivalColor(e.key)}">${esc(e.name.slice(0, 1).toUpperCase())}</span>
+        <span style="min-width:0"><div class="r-name">${esc(e.name)}</div>
+          <div class="r-sub">${s ? `${s.games} partidas · ${fmt(s.last_rating)}` : "sin informe todavía"}</div></span>
+        ${e.removable && SERVER ? `<button class="remove" title="Quitar de mis rivales" data-remove="${esc(e.removable)}">✕</button>` : ""}</li>`;
+    }).join("") || `<li class="muted" style="cursor:default">${state.status && state.status.source === "pgn"
+      ? "Buscá rivales arriba para agregarlos" : "Sin informes todavía"}</li>`;
+    $$("#rival-list [data-remove]").forEach((b) => b.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      editOpponents((list) => list.filter((o) => o !== b.dataset.remove));
+    }));
     $$("#rival-list li[data-rival]").forEach((li) => li.addEventListener("click", () => {
       state.rival = li.dataset.rival;
       state.tree.path = [];
@@ -860,11 +932,91 @@
     renderHero();
     $("#print-btn").classList.toggle("hidden", !hasReport || state.tab === "config");
     $("#empty").classList.toggle("hidden", hasReport || state.tab === "config");
+    if (!hasReport) renderEmpty();
     if (state.tab === "config") return renderConfig();
     $$(".tab").forEach((t) => { if (!hasReport && t.id !== "tab-config") t.innerHTML = ""; });
     if (!hasReport) return;
     ({ summary: renderSummary, plan: renderPlan, prep: renderPrep, time: renderTime, traps: renderTraps,
       openings: renderOpenings, tree: renderTree, weak: renderWeak, mine: renderMine })[state.tab]();
+  }
+
+  function renderEmpty() {
+    const st = state.status;
+    const pgn = st && st.source === "pgn";
+    const name = state.rival ? (rivalEntries().find((e) => e.key === state.rival) || {}).name : null;
+    $("#empty").innerHTML = name
+      ? `<h2>Todavía no hay informe de ${esc(name)}</h2>
+         <p>Tocá <b>▶ Todo</b> (${pgn ? "importa los PGN" : "descarga"}, analiza y genera los informes) o, si las partidas ya
+           están, <b>Analizar</b> y después <b>Generar informes</b>.</p>`
+      : pgn
+        ? `<h2>Modo PGN</h2>
+           <p>1. Copiá tus archivos PGN en <code>${esc(st.pgn_folder)}</code> y tocá <b>⤓ Importar PGN</b>.<br>
+              2. Buscá a tus rivales en el buscador de la izquierda y agregalos (y poné tu nombre en <b>Configuración</b>).<br>
+              3. Tocá <b>▶ Todo</b> para analizar y generar los informes.</p>`
+        : `<h2>Todavía no hay informes</h2>
+           <p>Completá tu usuario y los rivales en <b>Configuración</b> y apretá <b>Todo</b>
+             (descarga, análisis e informe). Desde la consola: <code>tegchess fetch</code>,
+             <code>tegchess analyze</code>, <code>tegchess report</code>.</p>`;
+  }
+
+  // ---------------------------------------------------------------- buscador de rivales
+  async function editOpponents(fn) {
+    const cfg = await api("/api/config");
+    if (cfg.source === "pgn") cfg.pgn.opponents = fn(cfg.pgn.opponents || []);
+    else cfg.opponents = fn(cfg.opponents || []);
+    await api("/api/config", { method: "PUT", body: JSON.stringify(cfg) });
+    await loadReports();
+  }
+
+  async function searchRivals() {
+    const box = $("#search-results");
+    const q = $("#rival-search").value.trim();
+    const pgn = state.status && state.status.source === "pgn";
+    if (!q && !pgn) { box.classList.add("hidden"); return; }
+    const chosen = new Set((state.status ? state.status.opponent_keys : []));
+    let html = "";
+    if (pgn) {
+      const res = await api("/api/players?limit=40&q=" + encodeURIComponent(q));
+      html = res.map((p) => {
+        const added = chosen.has(p.id.replace(/[^\p{L}\p{N}_-]+/gu, "_").replace(/^_+|_+$/g, ""));
+        return `<div class="res${added ? " added" : ""}" data-add="${esc(p.name)}">
+          <span class="r-avatar" style="--c:${rivalColor(p.id)};width:32px;height:32px;font-size:13px">${esc(p.name.slice(0, 1))}</span>
+          <span class="r-name"><div>${esc(p.name)}</div><div class="r-sub">${p.games} partidas · Elo ${fmt(p.rating)} · ${esc(p.last || "")}</div></span>
+          <span class="add">${added ? "✓" : "+"}</span></div>`;
+      }).join("") || (st_indexed() ? '<div class="muted" style="padding:8px">Sin coincidencias</div>'
+        : '<div class="muted" style="padding:8px">Todavía no importaste PGN: tocá <b>Importar PGN</b>.</div>');
+    } else {
+      html = `<div class="res" data-add="${esc(q)}"><span class="r-name">Agregar el usuario de Lichess <b>${esc(q)}</b></span><span class="add">+</span></div>`;
+    }
+    box.innerHTML = html;
+    box.classList.remove("hidden");
+    $$("[data-add]", box).forEach((el) => el.addEventListener("click", async () => {
+      if (el.classList.contains("added")) return;
+      const name = el.dataset.add;
+      await editOpponents((list) => (list.includes(name) ? list : [...list, name]));
+      searchRivals();
+    }));
+  }
+  const st_indexed = () => state.status && state.status.pgn_players_indexed;
+  $("#rival-search").addEventListener("input", debounce(searchRivals, 200));
+  $("#rival-search").addEventListener("focus", searchRivals);
+  $("#rival-search").addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { $("#search-results").classList.add("hidden"); e.target.blur(); }
+    if (e.key === "Enter") { const first = $("#search-results [data-add]:not(.added)"); if (first) first.click(); }
+  });
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest(".rival-search")) $("#search-results").classList.add("hidden");
+  });
+
+  function applySource() {
+    const pgn = state.status && state.status.source === "pgn";
+    const chip = $("#source-chip");
+    chip.textContent = pgn ? "PGN" : "Lichess";
+    chip.classList.toggle("pgn", !!pgn);
+    const fetchBtn = $("#fetch-btn");
+    fetchBtn.textContent = pgn ? "⤓ Importar PGN" : "⤓ Descargar";
+    fetchBtn.title = pgn ? "Importar las partidas de la carpeta de PGN" : "Descargar partidas nuevas de Lichess";
+    $("#rival-search").placeholder = pgn ? "Buscar jugador en los PGN…" : "Agregar usuario de Lichess…";
   }
 
   async function loadReports(only = null) {
@@ -873,13 +1025,18 @@
       state.reports = STATIC;
       rivals = Object.keys(STATIC);
     } else if (SERVER) {
+      if (!only) {
+        state.status = await api("/api/status");
+        applySource();
+      }
       rivals = only ? [only] : (await api("/api/reports")).map((r) => r.rival);
       const loaded = {};
       await Promise.all(rivals.map(async (r) => { loaded[r] = await api("/api/reports/" + encodeURIComponent(r)); }));
       state.reports = Object.fromEntries(rivals.map((r) => [r, loaded[r]]));
       state.loadedAt = Date.now() / 1000;
     }
-    if (!rivals.includes(state.rival)) state.rival = rivals[0] || null;
+    const keys = only ? rivals : rivalEntries().map((e) => e.key);
+    if (!keys.includes(state.rival)) state.rival = keys[0] || null;
     renderRivalList();
     renderTab();
   }
