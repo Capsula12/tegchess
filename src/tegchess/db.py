@@ -92,6 +92,15 @@ CREATE TABLE IF NOT EXISTS sync_state (
     updated_at         TIMESTAMP DEFAULT current_timestamp
 );
 
+-- Archivos PGN importados (modo PGN): si un archivo cambia o desaparece, se reimportan o borran sus partidas.
+CREATE TABLE IF NOT EXISTS pgn_files (
+    path        VARCHAR PRIMARY KEY,
+    size        BIGINT,
+    mtime       DOUBLE,
+    games       INTEGER,
+    imported_at TIMESTAMP DEFAULT current_timestamp
+);
+
 CREATE INDEX IF NOT EXISTS idx_moves_before ON moves (epd_before);
 CREATE INDEX IF NOT EXISTS idx_games_white ON games (white);
 CREATE INDEX IF NOT EXISTS idx_games_black ON games (black);
@@ -156,8 +165,16 @@ def connect(db_path: Path | str, read_only: bool = False) -> duckdb.DuckDBPyConn
     return con
 
 
+# Columnas agregadas después de la primera versión (bases ya creadas).
+MIGRATIONS = """
+ALTER TABLE games ADD COLUMN IF NOT EXISTS origin VARCHAR DEFAULT 'lichess';  -- 'lichess' | 'pgn'
+ALTER TABLE games ADD COLUMN IF NOT EXISTS pgn_file VARCHAR;                  -- archivo de origen (modo PGN)
+"""
+
+
 def init_schema(con: duckdb.DuckDBPyConnection) -> None:
     con.execute(SCHEMA)
+    con.execute(MIGRATIONS)
     con.execute(VIEWS)
 
 

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
+import unicodedata
 from datetime import date
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, Field
@@ -50,13 +53,53 @@ class AnalysisConfig(BaseModel):
     opening_depth_plies: int = 12
 
 
+class PgnConfig(BaseModel):
+    """Modo PGN: partidas de archivos (p.ej. exportadas de ChessBase) en vez de Lichess."""
+    folder: str = "pgn"                 # relativa a data_dir (o absoluta)
+    me: str = ""                        # mi nombre como figura en los PGN ("Apellido, Nombre")
+    opponents: list[str] = Field(default_factory=list)
+
+
+def normalize_player(name: str) -> str:
+    """Id de jugador: minúsculas y espacios normalizados ("Perez,Juan " -> "perez, juan").
+
+    Para Lichess es el usuario en minúsculas; para los PGN, el nombre sin tildes (las bases mezclan
+    "Pérez" y "Perez" para la misma persona).
+    """
+    name = "".join(c for c in unicodedata.normalize("NFD", name) if unicodedata.category(c) != "Mn")
+    name = re.sub(r"\s+", " ", name.strip().lower())
+    return re.sub(r"\s*,\s*", ", ", name)
+
+
+def report_key(player_id: str) -> str:
+    """Nombre de archivo seguro para el informe de un jugador (igual al id en Lichess)."""
+    return re.sub(r"[^\w-]+", "_", player_id).strip("_") or "_"
+
+
 class Config(BaseModel):
+    source: Literal["lichess", "pgn"] = "lichess"
     me: str = ""
     opponents: list[str] = Field(default_factory=list)
     download: DownloadConfig = Field(default_factory=DownloadConfig)
     engine: EngineConfig = Field(default_factory=EngineConfig)
     analysis: AnalysisConfig = Field(default_factory=AnalysisConfig)
+    pgn: PgnConfig = Field(default_factory=PgnConfig)
     data_dir: str = "data"
+
+    @property
+    def is_pgn(self) -> bool:
+        return self.source == "pgn"
+
+    def active(self) -> Config:
+        """La config con "yo" y los rivales del modo elegido (los análisis trabajan siempre con esta)."""
+        if not self.is_pgn:
+            return self
+        return self.model_copy(update={"me": self.pgn.me, "opponents": list(self.pgn.opponents)})
+
+    @property
+    def pgn_path(self) -> Path:
+        p = Path(self.pgn.folder).expanduser()
+        return p if p.is_absolute() else self.data_path / p
 
     @property
     def data_path(self) -> Path:
@@ -69,15 +112,20 @@ class Config(BaseModel):
 
     @property
     def reports_path(self) -> Path:
-        return self.data_path / "reports"
+        # Cada modo tiene sus informes: no se mezclan escalas de Elo ni rivales.
+        return self.data_path / ("reports-pgn" if self.is_pgn else "reports")
 
     def players(self) -> list[str]:
-        """Yo + rivales, sin duplicados y en minúsculas (Lichess no distingue mayúsculas)."""
+        """Yo + rivales, sin duplicados y normalizados (Lichess no distingue mayúsculas)."""
         seen: dict[str, None] = {}
         for u in [self.me, *self.opponents]:
             if u:
-                seen.setdefault(u.lower(), None)
+                seen.setdefault(normalize_player(u), None)
         return list(seen)
+
+    def display_name(self, player_id: str) -> str:
+        """El nombre como figura en la configuración (con mayúsculas), o el id."""
+        return next((o for o in [self.me, *self.opponents] if o and normalize_player(o) == player_id), player_id)
 
 
 def config_path() -> Path:
