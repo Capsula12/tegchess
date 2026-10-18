@@ -29,5 +29,8 @@ tegchess = "tegchess.cli:app"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+tegchess = ["openings/*.tsv", "openings/*.txt", "openings/*.md"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

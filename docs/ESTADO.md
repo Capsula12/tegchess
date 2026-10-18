@@ -32,8 +32,9 @@
 - **Modo PGN** (Configuración → Origen de las partidas): usa los PGN de `data/pgn/` (p.ej. exportados de la
   Mega Database de ChessBase). La carpeta manda: archivos nuevos o cambiados se reimportan y los que se sacan se
   borran de la base. Buscador de jugadores en la barra lateral para elegir rivales; "yo" es mi nombre en los PGN.
-  Fases calculadas por material (versión simple del criterio de Lichess), nombre de apertura tomado de las partidas
-  de Lichess que pasan por la misma posición (o el ECO), Elo de los tags, relojes y evaluaciones si los trae.
+  Fases calculadas por material (versión simple del criterio de Lichess), nombre de apertura de la lista oficial de
+  Lichess (`src/tegchess/openings/`, CC0; coincide con Lichess en el 95% de las partidas de prueba), Elo de los
+  tags, relojes y evaluaciones si los trae.
 - **PDF**: botón PDF → este rival, todos o los elegidos; un archivo por rival en `informes/informe-<Rival>.pdf`
   (se reemplaza si existe). Lo genera Edge/Chrome headless imprimiendo la interfaz con `?print=<rival>`.
 

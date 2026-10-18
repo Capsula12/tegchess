@@ -35,6 +35,7 @@ Para probar sin tocar los datos del usuario: apuntar `TEGCHESS_CONFIG` a un yaml
 | `config.py` | `config.yaml` (pydantic), `.env` → `LICHESS_TOKEN`, detección de Stockfish (PATH o winget) |
 | `lichess.py` | cliente HTTP secuencial: NDJSON en streaming, 429 → espera 65 s, reintentos |
 | `ingest.py` | parseo de partidas (python-chess) y sincronización incremental (`sync_state`) |
+| `opening_book.py` | nombres de apertura de Lichess por posición (`openings/*.tsv`, lichess-org/chess-openings, CC0) |
 | `pgn_import.py` | modo PGN: importa la carpeta de PGN (p.ej. ChessBase), fases, aperturas, índice de jugadores |
 | `db.py` | esquema DuckDB, macros `eval_cp`/`win_pct`, vistas `player_games` y `move_quality` |
 | `engine.py` | evaluaciones pendientes por EPD: terminales → nube de Lichess → pool de Stockfish |

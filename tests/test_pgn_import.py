@@ -66,6 +66,9 @@ def test_import_folder_and_report(con, tmp_path):
     perf = dict(con.execute("SELECT pgn_file || ':' || event_round, perf FROM (SELECT pgn_file, source || "
                             "coalesce(cast(num_plies AS VARCHAR), '') AS event_round, perf FROM games)").fetchall())
     assert "blitz" in perf.values() and "classical" in perf.values()
+    # Nombres de apertura de la lista de Lichess, aunque el PGN solo traiga el ECO.
+    fams = {f for (f,) in con.execute("SELECT opening_family FROM games WHERE origin = 'pgn'").fetchall()}
+    assert {"Italian Game", "Sicilian Defense"} <= fams
 
     # Reimportar sin cambios no duplica; si el archivo desaparece, se borran sus partidas.
     assert import_folder(con, cfg)["files"]["rivales.pgn"] == "sin cambios"

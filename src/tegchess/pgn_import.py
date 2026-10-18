@@ -3,7 +3,8 @@
 - La carpeta manda: si un archivo cambia se reimporta, si desaparece se borran sus partidas.
 - Los jugadores se identifican por el nombre normalizado ("perez, juan"); el Elo es el de los tags.
 - Sin división de fases de Lichess: se calcula con una versión simple de su criterio (material).
-- Sin nombre de apertura en el PGN: se toma de las partidas de Lichess que pasan por la misma posición.
+- Apertura: la lista de Lichess (opening_book.py), por la posición más profunda que coincide; así los nombres
+  son los mismos que en Lichess aunque el PGN traiga otros (o ninguno). Si no hay coincidencia: tag Opening o ECO.
 - Si el PGN trae relojes ([%clk]) o evaluaciones ([%eval]), se aprovechan.
 """
 
@@ -23,6 +24,9 @@ import duckdb
 
 from tegchess.config import Config, normalize_player
 from tegchess.ingest import ParsedGame, epd, store_games
+from tegchess.opening_book import family, name_for
+
+BOOK_MAX_PLY = 40   # hasta dónde se busca el nombre de la apertura
 
 log = logging.getLogger(__name__)
 
@@ -151,9 +155,14 @@ def parse_pgn_game(game: chess.pgn.Game, file_name: str) -> ParsedGame | None:
     status = ("mate" if board.is_checkmate() else "stalemate" if board.is_stalemate()
               else "draw" if winner is None else "resign")
     white, black = h.get("White", "?"), h.get("Black", "?")
-    opening = h.get("Opening")
+    eco, opening, opening_ply = h.get("ECO"), h.get("Opening"), None
     if opening and h.get("Variation"):
         opening = f"{opening}: {h['Variation']}"
+    hit = name_for([m["epd_after"] for m in moves[:BOOK_MAX_PLY]])
+    if hit:
+        eco, opening, opening_ply = hit
+    elif not opening and eco:
+        opening = f"ECO {eco}"
     created = _date(h)
     return ParsedGame(game={
         "id": gid, "rated": True, "variant": "standard", "speed": _perf(h), "perf": _perf(h),
@@ -162,8 +171,8 @@ def parse_pgn_game(game: chess.pgn.Game, file_name: str) -> ParsedGame | None:
         "white_name": white.strip(), "black_name": black.strip(),
         "white_rating": _int(h.get("WhiteElo")), "black_rating": _int(h.get("BlackElo")),
         "white_title": h.get("WhiteTitle"), "black_title": h.get("BlackTitle"),
-        "eco": h.get("ECO"), "opening_name": opening,
-        "opening_family": opening.split(":")[0].strip() if opening else None, "opening_ply": None,
+        "eco": eco, "opening_name": opening,
+        "opening_family": family(opening) if opening else None, "opening_ply": opening_ply,
         "clock_initial": init_s, "clock_increment": inc_s, "div_middle": div_middle, "div_end": div_end,
         "num_plies": len(sans), "has_analysis": bool(evals), "white_accuracy": None, "black_accuracy": None,
         "source": h.get("Event"), "origin": "pgn", "pgn_file": file_name,
@@ -208,7 +217,6 @@ def import_folder(con: duckdb.DuckDBPyConnection, cfg: Config,
                     [name, st.st_size, st.st_mtime, n])
         summary["files"][name] = n
 
-    name_openings(con)
     summary["players"] = write_players_index(con, cfg)
     return summary
 
@@ -246,39 +254,6 @@ def _import_file(con: duckdb.DuckDBPyConnection, path: Path, name: str,
                 batch.clear()
     store_games(con, batch)
     return count
-
-
-def name_openings(con: duckdb.DuckDBPyConnection) -> int:
-    """Pone nombre de apertura a las partidas PGN que no lo traen.
-
-    Usa la posición más profunda (hasta el ply 30) que tenga nombre en alguna partida de Lichess
-    (Lichess nombra la apertura en la posición `opening_ply`).
-    """
-    con.execute("""
-        CREATE OR REPLACE TEMP TABLE known_openings AS
-        SELECT m.epd_after AS epd, mode(g.opening_name) AS name, any_value(g.eco) AS eco
-        FROM games g JOIN moves m ON m.game_id = g.id AND m.ply = g.opening_ply
-        WHERE g.origin = 'lichess' AND g.opening_name IS NOT NULL
-        GROUP BY 1
-    """)
-    rows = con.execute("""
-        WITH cand AS (
-            SELECT g.id, arg_max(k.name, m.ply) AS name, arg_max(k.eco, m.ply) AS eco, max(m.ply) AS ply
-            FROM games g JOIN moves m ON m.game_id = g.id AND m.ply <= 30
-            JOIN known_openings k ON k.epd = m.epd_after
-            WHERE g.origin = 'pgn' AND g.opening_name IS NULL
-            GROUP BY g.id
-        )
-        UPDATE games SET opening_name = cand.name, opening_family = split_part(cand.name, ':', 1),
-                         opening_ply = cand.ply, eco = coalesce(games.eco, cand.eco)
-        FROM cand WHERE games.id = cand.id
-    """).fetchone()
-    # Las que siguen sin nombre: por código ECO, así al menos se agrupan.
-    con.execute("""
-        UPDATE games SET opening_name = 'ECO ' || eco, opening_family = 'ECO ' || substr(eco, 1, 2)
-        WHERE origin = 'pgn' AND opening_name IS NULL AND eco IS NOT NULL
-    """)
-    return rows[0] if rows else 0
 
 
 def write_players_index(con: duckdb.DuckDBPyConnection, cfg: Config) -> int:
