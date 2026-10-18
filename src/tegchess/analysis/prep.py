@@ -29,9 +29,10 @@ MAX_PLY = 20            # hasta dónde se prepara (10 jugadas)
 MIN_GAMES = 3           # partidas suyas en la posición para seguir la rama
 MIN_SHARE = 0.15        # elección suya mínima para seguir una rama
 MIN_REACH = 0.08        # probabilidad acumulada mínima
-MY_BRANCHES = 3         # respuestas nuestras que se exploran en cada posición
+MY_BRANCHES = 4         # respuestas nuestras que se exploran en cada posición
 MIN_GAIN = 4.0          # ganancia mínima (puntos de %) para considerar un objetivo (~ +70 cp)
 MAIN_LINE_REACH = 0.25  # la "línea principal" se sigue mientras la probabilidad sea al menos esta
+SHARE_PRIOR = 2         # partidas ficticias "en otra jugada": 3 de 3 no es 100% sino 60%
 
 
 def _rival_tree(con: duckdb.DuckDBPyConnection, cfg: Config, rival: str, color: str
@@ -59,7 +60,7 @@ def _rival_tree(con: duckdb.DuckDBPyConnection, cfg: Config, rival: str, color: 
                                                  "score": score})
     for d in (his, theirs):
         for lst in d.values():
-            lst.sort(key=lambda m: m["n"], reverse=True)
+            lst.sort(key=lambda m: (-m["n"], m["uci"]))
     return reach, his, theirs, total
 
 
@@ -110,7 +111,7 @@ def prep_section(con: duckdb.DuckDBPyConnection, cfg: Config, rival: str, my_col
         his_turn = (board.turn == chess.WHITE) == (riv_color == "white")
         if his_turn:
             options = his.get(epd, [])
-            moved = sum(m["n"] for m in options) or 1
+            moved = sum(m["n"] for m in options) + SHARE_PRIOR
             e_before = eval_me(epd)
             for m in options:
                 share = m["n"] / moved
@@ -205,7 +206,7 @@ def _main_line(reach: dict[str, int], his: dict[str, list[dict[str, Any]]],
         if not options:
             break
         top = options[0]
-        share = top["n"] / sum(m["n"] for m in options)
+        share = top["n"] / (sum(m["n"] for m in options) + (SHARE_PRIOR if his_turn else 0))
         if his_turn:
             if prob * share < MAIN_LINE_REACH:
                 break
