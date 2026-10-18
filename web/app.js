@@ -349,13 +349,14 @@
     const detail = (a) => {
       if (a.key === "errors") {
         const rows = (a.by_phase || []).map((p) => `<tr><td>${PHASES[p.phase]}</td><td>${p.moves}</td>
-          <td>${fmt(p.error_rate_pct, 1)}%</td><td>${fmt(p.blunder_rate_pct, 1)}%</td><td>${fmt(p.avg_cpl)}</td></tr>`);
+          <td class="${p.excess_pct > 0.5 ? "pct-bad" : p.excess_pct < -0.5 ? "pct-good" : ""}">${fmt(p.error_rate_pct, 1)}% / ${fmt(p.opp_error_rate_pct, 1)}%</td>
+          <td>${fmt(p.blunder_rate_pct, 1)}% / ${fmt(p.opp_blunder_rate_pct, 1)}%</td><td>${fmt(p.avg_cpl)} / ${fmt(p.opp_avg_cpl)}</td></tr>`);
         const k = a.kinds || {};
         const total = (k.missed_tactic || 0) + (k.allowed_tactic || 0) + (k.positional || 0) || 1;
         const bar = (n, cls, label) => `<div class="bar-row"><div class="lbl">${label}</div><div class="bar-track">
           <div class="bar ${cls}"><span style="width:${(100 * (n || 0)) / total}%"></span></div>
           <div class="bar-val">${n || 0} (${fmt((100 * (n || 0)) / total)}%)</div></div></div>`;
-        return table(["Fase", "Jugadas evaluadas", "Errores", "Graves", "CPL medio"], rows) +
+        return table(["Fase", "Tus jugadas evaluadas", "Errores vos / rivales", "Graves vos / rivales", "CPL vos / rivales"], rows) +
           `<div class="bars" style="margin-top:8px">${bar(k.missed_tactic, "", "Táctica no vista")}
             ${bar(k.allowed_tactic, "me", "Táctica permitida")}${bar(k.positional, "", "Posicional")}</div>`;
       }
@@ -388,7 +389,8 @@
       </div>`;
     root.innerHTML = `
       <p class="muted">Tu juego en general (${imp.games} partidas), no solo contra ${esc(RNAME())}. Cada área estima cuántos
-        puntos te cuesta cada 100 partidas, para saber por dónde empezar. Jugadas evaluadas por el motor: ${fmt(imp.eval_coverage_pct)}%
+        puntos te cuesta cada 100 partidas <b>de más respecto de tus rivales en las mismas partidas</b> (o de tu Elo), para
+        saber por dónde empezar. Jugadas evaluadas por el motor: ${fmt(imp.eval_coverage_pct)}%
         ${imp.eval_coverage_pct < 80 ? "(las métricas de errores, fases y conversión mejoran con más análisis: <code>engine.analyse_my_games_fully</code>)" : ""}.</p>
       <h3>Prioridades</h3>
       <div class="cards">${prio.map((a, i) => `<div class="card prio"><div class="label">${i + 1}. ${esc(a.title)}</div>

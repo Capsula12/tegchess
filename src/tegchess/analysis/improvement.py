@@ -1,11 +1,12 @@
 """Mi juego: qué mejorar en general, ordenado por cuántos puntos cuesta cada problema.
 
-Cada área estima su costo en **puntos cada 100 partidas** (1 punto = una victoria; tablas = medio),
-con supuestos simples y explícitos para poder compararlas entre sí:
-- Reloj: derrotas por tiempo, valuadas por la última evaluación conocida (si no hay, medio punto).
+Cada área estima su costo en **puntos cada 100 partidas** (1 punto = una victoria; tablas = medio).
+En blitz todos se equivocan y todos pierden alguna por tiempo: por eso la referencia son **mis rivales en
+las mismas partidas** (Lichess empareja ratings parecidos), y se cuenta solo el exceso sobre ellos:
+- Reloj: derrotas por tiempo (valuadas por la última evaluación conocida) menos las victorias por tiempo.
 - Aperturas: familias donde salgo peor según el motor (la señal estable), con el peso práctico del motor.
-- Conversión y defensa: partidas con +3 que no gano / con −3 que no salvo.
-- Errores: por fase y por tipo (táctico o posicional), oportunidades que dejo pasar.
+- Conversión: mi % de partidas ganadas con +3 contra el de mis rivales cuando ellos tuvieron +3.
+- Errores: mi tasa de errores contra la de mis rivales, por fase; tipo de error; oportunidades perdidas.
 - Tendencias: rendimiento sobre el Elo después de perder y en sesiones largas, por color y modalidad.
 - Finales: resultado por tipo de final.
 
@@ -22,7 +23,7 @@ import chess
 import duckdb
 
 from tegchess.analysis.clock import time_profile
-from tegchess.analysis.expectation import ENGINE_WEIGHT, confidence
+from tegchess.analysis.expectation import ENGINE_WEIGHT, confidence, shrunk_residual
 from tegchess.analysis.openings import opening_summary
 from tegchess.analysis.scope import scope_cte
 from tegchess.config import Config
@@ -65,16 +66,19 @@ def time_area(tp: dict[str, Any], con: duckdb.DuckDBPyConnection, cfg: Config, m
     # Última evaluación conocida en las derrotas por tiempo: ¿estaba pareja o mejor?
     rows = con.execute(f"""
         WITH {cte},
-        lost AS (SELECT game_id, color FROM scope WHERE status = 'outoftime' AND score = 0),
+        flagged AS (SELECT game_id, color, score FROM scope WHERE status = 'outoftime' AND score IN (0, 1)),
         last_eval AS (
-            SELECT l.game_id, arg_max(CASE l.color WHEN 'white' THEN 1 ELSE -1 END * eval_cp(e.cp, e.mate), m.ply) AS ev
-            FROM lost l JOIN moves m ON m.game_id = l.game_id JOIN evals e ON e.epd = m.epd_after
-            GROUP BY l.game_id
+            SELECT f.game_id, arg_max(CASE f.color WHEN 'white' THEN 1 ELSE -1 END * eval_cp(e.cp, e.mate), m.ply) AS ev
+            FROM flagged f JOIN moves m ON m.game_id = f.game_id JOIN evals e ON e.epd = m.epd_after
+            GROUP BY f.game_id
         )
-        SELECT l.game_id, le.ev FROM lost l LEFT JOIN last_eval le ON le.game_id = l.game_id
+        SELECT f.score, le.ev FROM flagged f LEFT JOIN last_eval le ON le.game_id = f.game_id
     """, params).fetchall()
-    points = sum(0.5 if ev is None else win_pct(ev) / 100 for _, ev in rows)
-    not_lost = sum(1 for _, ev in rows if ev is not None and ev >= -150)
+    # Lo que tiro yo por tiempo (según cómo estaba la partida) menos lo que me regalan mis rivales.
+    mine_lost = sum(0.5 if ev is None else win_pct(ev) / 100 for sc, ev in rows if sc == 0)
+    gifted = sum(0.5 if ev is None else win_pct(-ev) / 100 for sc, ev in rows if sc == 1)
+    points = mine_lost - gifted
+    not_lost = sum(1 for sc, ev in rows if sc == 0 and ev is not None and ev >= -150)
     trouble_cost = 0.0
     if s["trouble_games"] and s["score_no_trouble_pct"] is not None and s["score_in_trouble_pct"] is not None:
         trouble_cost = s["trouble_games"] * max(0.0, s["score_no_trouble_pct"] - s["score_in_trouble_pct"]) / 100
@@ -82,7 +86,8 @@ def time_area(tp: dict[str, Any], con: duckdb.DuckDBPyConnection, cfg: Config, m
     findings = []
     if s["lost_on_time"]:
         findings.append(f"{s['lost_on_time']} derrotas por tiempo ({s['lost_on_time_of_losses_pct']:.0f}% de tus "
-                        f"derrotas); en {not_lost} la última evaluación conocida era pareja o mejor para vos.")
+                        f"derrotas) contra {s['won_on_time']} victorias por tiempo; en {not_lost} de esas derrotas la "
+                        f"última evaluación conocida era pareja o mejor para vos.")
     if s["trouble_pct"]:
         findings.append(f"Te apurás (menos del {tp['thresholds']['trouble_pct']}% del reloj) en el "
                         f"{s['trouble_pct']:.0f}% de las partidas, en promedio en la jugada {s['avg_trouble_move']:.0f}; "
@@ -107,11 +112,13 @@ def openings_area(con: duckdb.DuckDBPyConnection, cfg: Config, me: str, total_ga
         for o in opening_summary(con, cfg, me, color):
             if o["games"] < MIN_FAMILY_GAMES or o["avg_eval_out"] is None:
                 continue
-            # Cuánto peor que una posición igualada salgo, en puntos prácticos.
-            deficit = ENGINE_WEIGHT * (50 - win_pct(o["avg_eval_out"])) / 100
+            # Cuánto peor que una posición igualada salgo (motor) o cuánto rindo bajo mi Elo (suavizado):
+            # se toma la mayor de las dos señales.
+            engine_deficit = ENGINE_WEIGHT * (50 - win_pct(o["avg_eval_out"])) / 100
+            deficit = max(engine_deficit, -shrunk_residual(o["residual_sum"], o["games"]))
             rows.append({**o, "color": color, "deficit": deficit,
                          "cost_per_100": _per100(max(0.0, deficit) * o["games"], total_games)})
-    weak = sorted([r for r in rows if r["deficit"] > 0.02 or (r["over_pct"] or 0) <= -8],
+    weak = sorted([r for r in rows if r["deficit"] > 0.02],
                   key=lambda r: r["cost_per_100"], reverse=True)
     strong = sorted([r for r in rows if r["deficit"] < -0.02 and (r["over_pct"] or 0) >= 0],
                     key=lambda r: r["deficit"])
@@ -148,6 +155,11 @@ def conversion_area(con: duckdb.DuckDBPyConnection, cfg: Config, me: str) -> dic
         FROM per_game
     """, params)[0]
     n = rows["games_with_evals"] or 0
+    my_rate = (rows["converted"] or 0) / rows["winning"] if rows["winning"] else None
+    # Mis rivales con +3 contra mí: su conversión es lo que yo no salvo.
+    opp_rate = 1 - (rows["saved"] or 0) / rows["losing"] if rows["losing"] else None
+    rows["my_conversion_pct"] = None if my_rate is None else round(100 * my_rate, 1)
+    rows["opp_conversion_pct"] = None if opp_rate is None else round(100 * opp_rate, 1)
     findings = []
     if rows["winning"]:
         findings.append(f"Tuviste +3 o más en {rows['winning']} partidas y ganaste {rows['converted']} "
@@ -155,9 +167,12 @@ def conversion_area(con: duckdb.DuckDBPyConnection, cfg: Config, me: str) -> dic
                         f"{rows['points_dropped']:.1f} puntos.")
     if rows["losing"]:
         findings.append(f"Estuviste −3 o peor en {rows['losing']} partidas y salvaste {rows['saved']} "
-                        f"({rows['points_saved']:.1f} puntos).")
-    # Parte de los puntos escapados es normal (blitz): se cuenta el exceso sobre convertir el 85%.
-    excess = max(0.0, (rows["points_dropped"] or 0) - 0.15 * (rows["winning"] or 0))
+                        f"({rows['points_saved']:.1f} puntos): tus rivales convierten el {rows['opp_conversion_pct']:.0f}% "
+                        f"de sus ventajas contra vos.")
+    # Exceso sobre la referencia: si convirtiera como mis rivales, ¿cuántos puntos más sumaría?
+    excess = 0.0
+    if my_rate is not None and opp_rate is not None:
+        excess = max(0.0, (opp_rate - my_rate) * rows["winning"])
     tips = ["Con ventaja grande, primero seguridad: frená el contrajuego, cambiá piezas y no regales tiempo.",
             "Repasá las partidas ganadas que no ganaste: casi siempre hay una jugada concreta donde se fue."]
     return {"key": "conversion", "title": "Convertir ventajas y defenderse", "cost_per_100": _per100(excess, n),
@@ -169,20 +184,31 @@ def errors_area(con: duckdb.DuckDBPyConnection, cfg: Config, me: str) -> dict[st
     base = _evaluated_moves_cte(cte)
     by_phase = fetch_dicts(con, f"""
         {base}
-        SELECT phase, count(*) AS moves,
-               round(100.0 * count(*) FILTER (WHERE judgment IN ('mistake', 'blunder')) / count(*), 1) AS error_rate_pct,
-               round(100.0 * count(*) FILTER (WHERE judgment = 'blunder') / count(*), 1) AS blunder_rate_pct,
-               round(avg(wp_loss), 2) AS avg_wp_loss, round(avg(least(cpl, 1000)), 1) AS avg_cpl
-        FROM q WHERE mine AND judgment IS NOT NULL
+        SELECT phase, count(*) FILTER (WHERE mine) AS moves,
+               round(100.0 * count(*) FILTER (WHERE mine AND judgment IN ('mistake', 'blunder'))
+                     / nullif(count(*) FILTER (WHERE mine), 0), 1) AS error_rate_pct,
+               round(100.0 * count(*) FILTER (WHERE mine AND judgment = 'blunder')
+                     / nullif(count(*) FILTER (WHERE mine), 0), 1) AS blunder_rate_pct,
+               round(avg(least(cpl, 1000)) FILTER (WHERE mine), 1) AS avg_cpl,
+               round(100.0 * count(*) FILTER (WHERE NOT mine AND judgment IN ('mistake', 'blunder'))
+                     / nullif(count(*) FILTER (WHERE NOT mine), 0), 1) AS opp_error_rate_pct,
+               round(100.0 * count(*) FILTER (WHERE NOT mine AND judgment = 'blunder')
+                     / nullif(count(*) FILTER (WHERE NOT mine), 0), 1) AS opp_blunder_rate_pct,
+               round(avg(least(cpl, 1000)) FILTER (WHERE NOT mine), 1) AS opp_avg_cpl,
+               sum(least(wp_loss, 50)) FILTER (WHERE mine) AS my_loss,
+               sum(least(wp_loss, 50)) FILTER (WHERE NOT mine) AS opp_loss
+        FROM q WHERE judgment IS NOT NULL
         GROUP BY phase
         ORDER BY CASE phase WHEN 'opening' THEN 1 WHEN 'middlegame' THEN 2 ELSE 3 END
     """, params)
     # Oportunidades: el rival acaba de cometer un error (≥ 10 puntos) y le toca a mi jugada.
     opp = fetch_dicts(con, f"""
         {base}
-        SELECT count(*) AS chances,
-               count(*) FILTER (WHERE wp_loss >= 10) AS missed
-        FROM q WHERE mine AND judgment IS NOT NULL AND prev_wp_loss >= 10
+        SELECT count(*) FILTER (WHERE mine) AS chances,
+               count(*) FILTER (WHERE mine AND wp_loss >= 10) AS missed,
+               count(*) FILTER (WHERE NOT mine) AS opp_chances,
+               count(*) FILTER (WHERE NOT mine AND wp_loss >= 10) AS opp_missed
+        FROM q WHERE judgment IS NOT NULL AND prev_wp_loss >= 10
     """, params)[0]
     # Tipo de error: táctico (la mejor era captura/jaque, o mi jugada permite una captura/jaque ganador).
     mistakes = con.execute(f"""
@@ -196,30 +222,41 @@ def errors_area(con: duckdb.DuckDBPyConnection, cfg: Config, me: str) -> dict[st
         kinds[_error_kind(epd, uci, best, reply)] += 1
     total_mistakes = len(mistakes)
     findings = []
-    if by_phase:
-        worst = max(by_phase, key=lambda r: r["error_rate_pct"] if r["moves"] >= 50 else -1)
-        if worst["moves"] >= 50:
-            findings.append(f"Donde más te equivocás: {PHASES[worst['phase']].lower()} "
-                            f"({worst['error_rate_pct']:.1f}% de las jugadas son errores, "
-                            f"{worst['blunder_rate_pct']:.1f}% graves).")
+    for r in by_phase:
+        r["excess_pct"] = (None if r["error_rate_pct"] is None or r["opp_error_rate_pct"] is None
+                           else round(r["error_rate_pct"] - r["opp_error_rate_pct"], 1))
+    valid = [r for r in by_phase if r["moves"] >= 50 and r["excess_pct"] is not None]
+    if valid:
+        worst = max(valid, key=lambda r: r["excess_pct"])
+        verb = "más" if worst["excess_pct"] > 0 else "menos"
+        findings.append(f"Donde peor te va frente a tus rivales: {PHASES[worst['phase']].lower()} — errores en el "
+                        f"{worst['error_rate_pct']:.1f}% de tus jugadas contra {worst['opp_error_rate_pct']:.1f}% de ellos "
+                        f"({verb} que tus rivales).")
     if total_mistakes:
         findings.append(f"De {total_mistakes} errores: {kinds['missed_tactic']} tácticas que no viste, "
                         f"{kinds['allowed_tactic']} tácticas que permitiste y {kinds['positional']} posicionales.")
     if opp["chances"]:
+        theirs = (f"; tus rivales dejan pasar el {100 * opp['opp_missed'] / opp['opp_chances']:.0f}% de los tuyos"
+                  if opp["opp_chances"] else "")
         findings.append(f"Cuando el rival se equivoca, no lo castigás en {opp['missed']} de {opp['chances']} "
-                        f"ocasiones ({100 * opp['missed'] / opp['chances']:.0f}%).")
+                        f"ocasiones ({100 * opp['missed'] / opp['chances']:.0f}%){theirs}.")
     tips = []
     if kinds["allowed_tactic"] >= kinds["missed_tactic"] and kinds["allowed_tactic"]:
         tips.append("Antes de mover, revisá capturas y jaques que le dejás al rival (chequeo de seguridad).")
     if kinds["missed_tactic"]:
         tips.append("Ejercicios de táctica cortos y diarios: la mitad de tus errores tácticos son jugadas forzantes que no viste.")
-    if opp["chances"] and opp["missed"] / opp["chances"] > 0.4:
+    if (opp["chances"] and opp["opp_chances"]
+            and opp["missed"] / opp["chances"] > opp["opp_missed"] / opp["opp_chances"] + 0.05):
         tips.append("Cuando el rival hace una jugada rara o rápida, buscá primero cómo castigarla.")
-    # Costo: pérdida media por error grave convertida a puntos (aprox.), sobre las partidas con evaluación.
+    # Costo: la pérdida de % de victoria que acumulo de más respecto de mis rivales, en puntos prácticos.
     games = con.execute(f"{base} SELECT count(DISTINCT game_id) FROM q WHERE mine AND judgment IS NOT NULL",
                         params).fetchone()[0]
-    blunder_points = sum(min(w, 50) for *_, w, _p in mistakes) / 100 * ENGINE_WEIGHT
-    return {"key": "errors", "title": "Errores y táctica", "cost_per_100": _per100(blunder_points * 0.5, games),
+    # Solo las fases donde pierdo más que ellos: lo que hago mejor en otra fase no compensa lo que falta acá.
+    excess_loss = sum(max(0.0, (r["my_loss"] or 0) - (r["opp_loss"] or 0)) for r in by_phase)
+    for r in by_phase:
+        r.pop("my_loss", None), r.pop("opp_loss", None)
+    points = max(0.0, excess_loss) / 100 * ENGINE_WEIGHT
+    return {"key": "errors", "title": "Errores y táctica", "cost_per_100": _per100(points, games),
             "findings": findings, "tips": tips, "by_phase": by_phase, "kinds": dict(kinds),
             "opportunities": opp, "games_with_evals": games}
 
