@@ -29,6 +29,11 @@
     pensadas largas y calidad de juego con poco reloj, comparado con el mío. Las ideas salen también en el plan.
 - Interfaz local (`run.bat`), oscura estilo reproductor de música: rivales en la barra lateral, Descargar / Analizar /
   Generar informes / Todo, progreso en una barra inferior.
+- **Modo PGN** (Configuración → Origen de las partidas): usa los PGN de `data/pgn/` (p.ej. exportados de la
+  Mega Database de ChessBase). La carpeta manda: archivos nuevos o cambiados se reimportan y los que se sacan se
+  borran de la base. Buscador de jugadores en la barra lateral para elegir rivales; "yo" es mi nombre en los PGN.
+  Fases calculadas por material (versión simple del criterio de Lichess), nombre de apertura tomado de las partidas
+  de Lichess que pasan por la misma posición (o el ECO), Elo de los tags, relojes y evaluaciones si los trae.
 - **PDF**: botón PDF → este rival, todos o los elegidos; un archivo por rival en `informes/informe-<Rival>.pdf`
   (se reemplaza si existe). Lo genera Edge/Chrome headless imprimiendo la interfaz con `?print=<rival>`.
 
@@ -63,6 +68,9 @@ Preguntas del enunciado original y cobertura:
    y desvíos de repertorio; actualización automática al detectar partidas nuevas.
 
 ## Para revisar
+
+- Modo PGN: la modalidad sale de `TimeControl` o del nombre del torneo; la Mega casi nunca trae `TimeControl`, así que
+  todo queda como "classical" salvo torneos con "blitz"/"rapid" en el nombre. La expectativa usa el Elo FIDE de los tags.
 
 - La calidad de juego con poco reloj usa solo jugadas evaluadas; con `engine.max_ply: 30` casi no hay jugadas
   con apuro evaluadas (salvo partidas analizadas en Lichess). La interfaz lo avisa.

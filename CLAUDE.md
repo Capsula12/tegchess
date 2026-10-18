@@ -35,6 +35,7 @@ Para probar sin tocar los datos del usuario: apuntar `TEGCHESS_CONFIG` a un yaml
 | `config.py` | `config.yaml` (pydantic), `.env` → `LICHESS_TOKEN`, detección de Stockfish (PATH o winget) |
 | `lichess.py` | cliente HTTP secuencial: NDJSON en streaming, 429 → espera 65 s, reintentos |
 | `ingest.py` | parseo de partidas (python-chess) y sincronización incremental (`sync_state`) |
+| `pgn_import.py` | modo PGN: importa la carpeta de PGN (p.ej. ChessBase), fases, aperturas, índice de jugadores |
 | `db.py` | esquema DuckDB, macros `eval_cp`/`win_pct`, vistas `player_games` y `move_quality` |
 | `engine.py` | evaluaciones pendientes por EPD: terminales → nube de Lichess → pool de Stockfish |
 | `metrics.py` | equivalente Python de las macros (CPL, % de victoria, umbrales de Lichess) |
@@ -55,6 +56,10 @@ Para probar sin tocar los datos del usuario: apuntar `TEGCHESS_CONFIG` a un yaml
 
 ## Convenciones y trampas conocidas
 
+- **Modos** (`config.source`): `lichess` o `pgn`. Cada modo tiene su "yo", sus rivales (`pgn.me`, `pgn.opponents`),
+  sus informes (`data/reports` / `data/reports-pgn`) y su exportación. Los análisis usan `cfg.active()`; el
+  alcance filtra por `games.origin`. En modo PGN no se aplican los filtros de descarga (modalidad, fechas, tope).
+  Jugadores PGN: id = nombre normalizado sin tildes (`normalize_player`); archivos de informe: `report_key(id)`.
 - **Posiciones**: clave = EPD (`board.epd()`, FEN sin contadores). Evaluaciones siempre **desde blancas**;
   `eval_cp` acota a ±1000 y el mate cuenta como ±1000. Pérdida de % de victoria con la fórmula de Lichess;
   umbrales 5/10/15 = imprecisión/error/error grave.
