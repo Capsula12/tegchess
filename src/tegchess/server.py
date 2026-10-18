@@ -17,7 +17,8 @@ from pydantic import BaseModel, ValidationError
 
 from tegchess import pipeline
 from tegchess.pdf import PDF_DIR, export_pdfs
-from tegchess.config import Config, find_stockfish, lichess_token, load_config, save_config
+from tegchess.config import Config, find_stockfish, lichess_token, load_config, normalize_player, report_key, save_config
+from tegchess.pgn_import import search_players
 from tegchess.report import WEB_DIR
 
 log = logging.getLogger(__name__)
@@ -65,7 +66,9 @@ class JobRunner:
                 result["export"] = str(pipeline.export_html(cfg))
             if action == "pdf":
                 # No toca la base: imprime los informes JSON ya generados.
-                result["pdf"] = export_pdfs(cfg, users or cfg.opponents, base_url, self.progress)
+                active = cfg.active()
+                result["pdf"] = export_pdfs(active, users or [report_key(o.lower()) for o in active.opponents],
+                                            base_url, self.progress)
                 result["pdf_dir"] = str(PDF_DIR)
             if action not in ("fetch", "analyze", "report", "all", "pdf"):
                 raise ValueError(f"Acción desconocida: {action}")
@@ -85,10 +88,15 @@ def create_app() -> FastAPI:
 
     @app.get("/api/status")
     def status() -> dict[str, Any]:
-        cfg = load_config()
+        cfg = load_config().active()
+        players_file = cfg.data_path / "pgn_players.json"
         return {
+            "source": cfg.source,
             "me": cfg.me,
             "opponents": cfg.opponents,
+            "opponent_keys": [report_key(normalize_player(o)) for o in cfg.opponents],
+            "pgn_folder": str(cfg.pgn_path),
+            "pgn_players_indexed": players_file.exists(),
             "stockfish": find_stockfish(cfg.engine.path),
             "token": bool(lichess_token()),
             "db_exists": cfg.db_path.exists(),
@@ -113,8 +121,13 @@ def create_app() -> FastAPI:
         out = []
         for p in sorted(cfg.reports_path.glob("*.json")):
             meta = json.loads(p.read_text(encoding="utf-8")).get("meta", {})
-            out.append({"rival": p.stem, "generated_at": meta.get("generated_at")})
+            out.append({"rival": p.stem, "name": meta.get("rival_name"), "generated_at": meta.get("generated_at")})
         return out
+
+    @app.get("/api/players")
+    def players(q: str = "", limit: int = 30) -> list[dict[str, Any]]:
+        """Buscador de jugadores de los PGN importados (índice en data/pgn_players.json)."""
+        return search_players(load_config(), q, min(limit, 200))
 
     @app.get("/api/reports/{rival}")
     def get_report(rival: str) -> FileResponse:

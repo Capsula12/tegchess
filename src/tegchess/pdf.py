@@ -16,7 +16,9 @@ from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import quote
 
-from tegchess.config import PROJECT_ROOT, Config
+import json
+
+from tegchess.config import PROJECT_ROOT, Config, normalize_player
 
 log = logging.getLogger(__name__)
 
@@ -41,14 +43,13 @@ def find_browser() -> str | None:
     return next((str(p) for p in candidates if p.exists()), None)
 
 
-def display_name(cfg: Config, rival: str) -> str:
-    """El nombre como figura en la configuración (con mayúsculas), o el id de Lichess."""
-    return next((o for o in cfg.opponents if o.lower() == rival.lower()), rival)
+def _pdf_name(name: str) -> str:
+    return "informe-" + ("".join(c for c in name if c.isalnum() or c in "-_") or "rival") + ".pdf"
 
 
 def pdf_filename(cfg: Config, rival: str) -> str:
-    name = "".join(c for c in display_name(cfg, rival) if c.isalnum() or c in "-_")
-    return f"informe-{name}.pdf"
+    """informe-<Nombre>.pdf con el nombre como figura en la configuración ("Perez, Juan" -> PerezJuan)."""
+    return _pdf_name(cfg.display_name(normalize_player(rival)))
 
 
 def export_pdfs(cfg: Config, rivals: list[str], base_url: str,
@@ -64,12 +65,13 @@ def export_pdfs(cfg: Config, rivals: list[str], base_url: str,
     # Perfiles temporales: así no choca con un Edge/Chrome que el usuario tenga abierto.
     with tempfile.TemporaryDirectory(prefix="tegchess_pdf_", ignore_cleanup_errors=True) as profiles:
         for rival in rivals:
-            rival = rival.lower()
-            if not (cfg.reports_path / f"{rival}.json").exists():
+            report_file = cfg.reports_path / f"{rival}.json"
+            if not report_file.exists():
                 result[rival] = {"ok": False, "error": "no hay informe generado"}
                 tick()
                 continue
-            target = out_dir / pdf_filename(cfg, rival)
+            meta = json.loads(report_file.read_text(encoding="utf-8")).get("meta", {})
+            target = out_dir / _pdf_name(meta.get("rival_name") or rival)
             tmp = target.with_name(target.stem + ".tmp.pdf")
             tmp.unlink(missing_ok=True)
             profile = Path(profiles) / rival

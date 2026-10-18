@@ -23,7 +23,7 @@ import chess.engine
 import duckdb
 
 from tegchess import db
-from tegchess.config import Config, find_stockfish
+from tegchess.config import Config, find_stockfish, normalize_player
 from tegchess.lichess import LichessClient, RateLimited
 
 log = logging.getLogger(__name__)
@@ -51,7 +51,7 @@ def pending_positions(con: duckdb.DuckDBPyConnection, max_ply: int,
         SELECT epd_before FROM moves WHERE ply > {int(limit_ply)} AND game_id IN ({full_games})
         UNION ALL
         SELECT epd_after FROM moves WHERE ply > {int(limit_ply)} AND game_id IN ({full_games})"""
-        players = [p.lower() for p in full_players]
+        players = [normalize_player(p) for p in full_players]
         params = players * 4
     sql = f"""
     WITH pos AS (

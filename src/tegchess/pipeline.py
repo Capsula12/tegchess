@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from typing import Any
 from pathlib import Path
 
 from tegchess import db
-from tegchess.config import Config, lichess_token
+from tegchess.config import Config, lichess_token, normalize_player
 from tegchess.engine import evaluate_pending
 from tegchess.ingest import sync_user
 from tegchess.lichess import LichessClient, LichessError
@@ -23,8 +24,20 @@ def _noop_progress(_desc: str, _total: int | None) -> Callable[[], None]:
     return lambda: None
 
 
-def fetch_all(cfg: Config, users: list[str] | None = None, progress: Progress = _noop_progress) -> dict[str, int | str]:
-    """Descarga incremental de cada usuario. Devuelve {usuario: nuevas | mensaje de error}."""
+def fetch_all(cfg: Config, users: list[str] | None = None, progress: Progress = _noop_progress) -> dict[str, Any]:
+    """Descarga incremental de cada usuario (Lichess) o importación de la carpeta de PGN (modo PGN).
+
+    Devuelve {usuario: nuevas | mensaje de error} o, en modo PGN, el resumen de la importación.
+    """
+    cfg = cfg.active()
+    if cfg.is_pgn:
+        from tegchess.pgn_import import import_folder
+
+        con = db.connect(cfg.db_path)
+        try:
+            return {"pgn": import_folder(con, cfg, progress)}
+        finally:
+            con.close()
     users = users or cfg.players()
     result: dict[str, int | str] = {}
     con = db.connect(cfg.db_path)
@@ -43,6 +56,7 @@ def fetch_all(cfg: Config, users: list[str] | None = None, progress: Progress = 
 
 
 def analyze(cfg: Config, progress: Progress = _noop_progress) -> dict[str, int]:
+    cfg = cfg.active()
     con = db.connect(cfg.db_path)
     try:
         with LichessClient(lichess_token()) as client:
@@ -52,7 +66,8 @@ def analyze(cfg: Config, progress: Progress = _noop_progress) -> dict[str, int]:
 
 
 def build_reports(cfg: Config, rivals: list[str] | None = None, progress: Progress = _noop_progress) -> list[Path]:
-    rivals = [r.lower() for r in (rivals or cfg.opponents)]
+    cfg = cfg.active()
+    rivals = [normalize_player(r) for r in (rivals or cfg.opponents)]
     tick = progress("Generando informes", len(rivals))
     paths = []
     cache: dict = {}   # mi sección es la misma en todos los informes
@@ -71,4 +86,4 @@ def export_html(cfg: Config) -> Path:
     import json
 
     reports = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(cfg.reports_path.glob("*.json"))]
-    return export_static(reports, cfg.data_path / "export")
+    return export_static(reports, cfg.data_path / ("export-pgn" if cfg.is_pgn else "export"))

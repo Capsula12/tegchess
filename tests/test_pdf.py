@@ -16,7 +16,7 @@ def test_pdf_filename_uses_configured_name(tmp_path):
 def test_export_pdfs_without_report(tmp_path, monkeypatch):
     monkeypatch.setattr(pdf, "find_browser", lambda: "navegador")
     steps = []
-    result = pdf.export_pdfs(_cfg(tmp_path), ["Maxivo"], "http://127.0.0.1:1",
+    result = pdf.export_pdfs(_cfg(tmp_path), ["maxivo"], "http://127.0.0.1:1",
                              lambda desc, total: (lambda: steps.append(desc)), out_dir=tmp_path / "informes")
     assert result == {"maxivo": {"ok": False, "error": "no hay informe generado"}}
     assert steps == ["Generando PDF"]

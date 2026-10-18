@@ -51,15 +51,23 @@ def rich_progress() -> Iterator[Callable[[str, int | None], Callable[[], None]]]
 def fetch(
     users: list[str] = typer.Argument(None, help="Usuarios a descargar (por defecto: yo + rivales del config)"),
 ) -> None:
-    """Descarga (incremental) las partidas a DuckDB."""
+    """Descarga (incremental) las partidas a DuckDB; en modo PGN, importa la carpeta de PGN."""
     from tegchess.pipeline import fetch_all
 
     cfg = load_config()
-    if not (users or cfg.players()):
+    if not cfg.is_pgn and not (users or cfg.players()):
         console.print("[red]No hay usuarios: completá 'me' y 'opponents' en config.yaml[/]")
         raise typer.Exit(1)
     with rich_progress() as progress:
         result = fetch_all(cfg, users, progress)
+    if cfg.is_pgn:
+        summary = result["pgn"]
+        for name, n in summary["files"].items():
+            console.print(f"  {name}: " + (f"{n} partidas" if isinstance(n, int) else n))
+        for name in summary["removed"]:
+            console.print(f"  {name}: [yellow]ya no está en la carpeta, se borraron sus partidas[/]")
+        console.print(f"Carpeta: {summary['folder']} · {summary['players']} jugadores")
+        return
     for user, n in result.items():
         console.print(f"  {user}: " + (f"{n} partidas nuevas" if isinstance(n, int) else f"[red]{n}[/]"))
 
@@ -161,7 +169,8 @@ def openings(
 @app.command()
 def doctor() -> None:
     """Muestra la configuración detectada (usuarios, Stockfish, token)."""
-    cfg = load_config()
+    cfg = load_config().active()
+    console.print(f"Origen de las partidas: [bold]{'archivos PGN (' + str(cfg.pgn_path) + ')' if cfg.is_pgn else 'Lichess'}[/]")
     console.print(f"Yo: [bold]{cfg.me or '(sin definir)'}[/]  Rivales: {', '.join(cfg.opponents) or '(ninguno)'}")
     console.print(f"Base de datos: {cfg.db_path}")
     console.print(f"Stockfish: {find_stockfish(cfg.engine.path) or '[red]no encontrado[/]'}")

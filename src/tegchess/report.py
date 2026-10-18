@@ -26,7 +26,7 @@ from tegchess.analysis.openings import opening_summary, repeated_positions, repe
 from tegchess.analysis.prep import prep_section
 from tegchess.analysis.traps import find_traps
 from tegchess.analysis.scope import scope_cte
-from tegchess.config import PROJECT_ROOT, Config
+from tegchess.config import PROJECT_ROOT, Config, normalize_player, report_key
 from tegchess.db import fetch_dicts
 from tegchess.engine import ensure_best_moves, epd_to_fen
 
@@ -262,8 +262,8 @@ def me_section(con: duckdb.DuckDBPyConnection, cfg: Config, me: str) -> dict[str
 def build_report(con: duckdb.DuckDBPyConnection, cfg: Config, rival: str,
                  cache: dict[str, Any] | None = None) -> dict[str, Any]:
     """Informe de un rival. `cache` (opcional) guarda mi sección entre rivales."""
-    rival = rival.lower()
-    me = cfg.me.lower() if cfg.me else None
+    rival = normalize_player(rival)
+    me = normalize_player(cfg.me) if cfg.me else None
     has_me = bool(me and me != rival)
     rival_section = player_section(con, cfg, rival)
     rival_section["traps"] = find_traps(con, cfg, rival, me if has_me else None)
@@ -287,12 +287,14 @@ def build_report(con: duckdb.DuckDBPyConnection, cfg: Config, rival: str,
             "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "me": me,
             "me_name": cfg.me if has_me else None,
+            "key": report_key(rival),
+            "source": cfg.source,
             "rival": rival,
-            "rival_name": next((o for o in cfg.opponents if o.lower() == rival), rival),
-            "perf_types": cfg.download.perf_types,
-            "since": str(cfg.download.since) if cfg.download.since else None,
-            "until": str(cfg.download.until) if cfg.download.until else None,
-            "max_games": cfg.download.max_games,
+            "rival_name": cfg.display_name(rival),
+            "perf_types": [] if cfg.is_pgn else cfg.download.perf_types,
+            "since": str(cfg.download.since) if cfg.download.since and not cfg.is_pgn else None,
+            "until": str(cfg.download.until) if cfg.download.until and not cfg.is_pgn else None,
+            "max_games": None if cfg.is_pgn else cfg.download.max_games,
             "engine_depth": cfg.engine.depth,
             "analysed_plies": cfg.engine.max_ply,
             "eval_coverage_pct": round(100 * eval_coverage[0] / eval_coverage[1], 1) if eval_coverage[1] else 0,
@@ -314,7 +316,7 @@ def _json_default(o: Any) -> Any:
 
 def write_report(report: dict[str, Any], reports_dir: Path) -> Path:
     reports_dir.mkdir(parents=True, exist_ok=True)
-    path = reports_dir / f"{report['meta']['rival']}.json"
+    path = reports_dir / f"{report_key(report['meta']['rival'])}.json"
     path.write_text(json.dumps(report, ensure_ascii=False, default=_json_default), encoding="utf-8")
     return path
 
@@ -324,7 +326,7 @@ def export_static(reports: list[dict[str, Any]], out_dir: Path) -> Path:
     if out_dir.exists():
         shutil.rmtree(out_dir)
     shutil.copytree(WEB_DIR, out_dir)
-    payload = {r["meta"]["rival"]: r for r in reports}
+    payload = {report_key(r["meta"]["rival"]): r for r in reports}
     data_js = "window.TEGCHESS_STATIC = " + json.dumps(payload, ensure_ascii=False, default=_json_default) + ";\n"
     (out_dir / "static-data.js").write_text(data_js, encoding="utf-8")
     return out_dir / "index.html"
