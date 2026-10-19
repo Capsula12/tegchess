@@ -21,6 +21,8 @@
     orientation: "white",
     loadedAt: 0,          // cuándo se cargaron los informes (para recargar al terminar una tarea)
     status: null,         // /api/status: modo (lichess | pgn), yo, rivales
+    me: null,             // mi perfil general (/api/me)
+    view: "rival",        // rival | profile
   };
 
   const $ = (sel, root = document) => root.querySelector(sel);
@@ -339,16 +341,7 @@
   }
 
   // ---------------------------------------------------------------- Mi juego
-  function renderMine() {
-    const root = $("#tab-mine");
-    const r = report();
-    const imp = r.me && r.me.improvement;
-    if (!imp) {
-      root.innerHTML = r.me
-        ? '<p class="muted">Este informe es anterior a "Mi juego": regeneralo con <b>Generar informes</b>.</p>'
-        : '<p class="muted">Completá tu usuario (<b>me</b>) en la configuración para ver tu análisis.</p>';
-      return;
-    }
+  function improvementHtml(imp, part = "all") {
     const byKey = Object.fromEntries(imp.areas.map((a) => [a.key, a]));
     const prio = imp.priorities.map((k) => byKey[k]);
     const detail = (a) => {
@@ -392,19 +385,108 @@
         ${a.tips.length ? `<div class="tips"><b>Qué hacer</b><ul>${a.tips.map((t) => `<li>${esc(t)}</li>`).join("")}</ul></div>` : ""}
         ${detail(a)}
       </div>`;
-    root.innerHTML = `
-      <p class="muted">Tu juego en general (${imp.games} partidas), no solo contra ${esc(RNAME())}. Cada área estima cuántos
-        puntos te cuesta cada 100 partidas <b>de más respecto de tus rivales en las mismas partidas</b> (o de tu Elo), para
-        saber por dónde empezar. Jugadas evaluadas por el motor: ${fmt(imp.eval_coverage_pct)}%
-        ${imp.eval_coverage_pct < 80 ? "(las métricas de errores, fases y conversión mejoran con más análisis: <code>engine.analyse_my_games_fully</code>)" : ""}.</p>
-      <h3>Prioridades</h3>
+    const priorities = `
+      <h2>Prioridades</h2>
+      <p class="muted">Cada área estima cuántos puntos te cuesta cada 100 partidas <b>de más respecto de tus rivales en las
+        mismas partidas</b> (o de tu Elo), para saber por dónde empezar. Jugadas tuyas evaluadas por el motor:
+        ${fmt(imp.eval_coverage_pct)}%${imp.eval_coverage_pct < 80 ? " (errores, fases y conversión mejoran con más análisis: <code>engine.analyse_my_games_fully</code>)" : ""}.</p>
       <div class="cards">${prio.map((a, i) => `<div class="card prio"><div class="label">${i + 1}. ${esc(a.title)}</div>
         <div class="value">−${fmt(a.cost_per_100, 1)}</div><div class="sub">puntos cada 100 partidas</div></div>`).join("") ||
-        '<p class="muted">Nada que se destaque todavía.</p>'}</div>
-      ${imp.areas.map(areaHtml).join("")}
-      <h2>Tu manejo del tiempo y tus aperturas</h2>
-      <p class="muted">El detalle de tu reloj está en la pestaña <b>Tiempo</b> (columna "Vos") y el de tus aperturas en
-        <b>Aperturas</b> y <b>Posiciones flojas</b> (eligiendo "Yo").</p>`;
+        '<p class="muted">Nada que se destaque todavía.</p>'}</div>`;
+    const areas = `<h2>Qué mejorar</h2>${imp.areas.map(areaHtml).join("")}`;
+    return part === "priorities" ? priorities : part === "areas" ? areas : priorities + areas;
+  }
+
+  // ---------------------------------------------------------------- Mi perfil
+  function metricValue(fmtKind, v) {
+    if (v === null || v === undefined) return "–";
+    if (fmtKind === "signed") return sgn(v, 1);
+    if (fmtKind === "pct") return fmt(v, 1) + "%";
+    if (fmtKind === "eval") return evalTxt(v);
+    if (fmtKind === "int") return fmt(v);
+    return fmt(v, 1);
+  }
+
+  function openingRows(list) {
+    return list.map((o) => `<tr><td>${esc(o.opening)} <span class="muted">con ${colorName(o.color)}</span></td>
+      <td>${o.games}</td><td${ciTitle(o.score_ci)}>${fmt(o.score_pct)}%</td><td>${evalTxt(o.avg_eval_out)}</td>
+      <td>${sgn(o.over_pct)}</td><td class="${o.rating_pts > 0 ? "pct-good" : "pct-bad"}">${sgn(o.rating_pts, 1)}</td>
+      <td>${confBadge(o.confidence)}</td></tr>`);
+  }
+
+  function renderProfile() {
+    const root = $("#tab-profile");
+    const pr = state.me;
+    if (!pr) {
+      root.innerHTML = `<p class="muted">Todavía no hay perfil propio. Completá tu usuario en <b>Configuración</b> y tocá
+        <b>Generar informes</b>.</p>`;
+      return;
+    }
+    const cmp = pr.comparison;
+    const metricRows = cmp.metrics.map((m) => `<tr><td>${esc(m.label)}</td>
+      <td class="verdict-${m.verdict || ""}">${metricValue(m.format, m.me)}</td>
+      <td>${metricValue(m.format, m.rivals_avg)}</td>
+      <td>${m.best ? `${metricValue(m.format, m.best.value)} <span class="muted">${esc(m.best.name)}</span>` : "–"}</td>
+      <td>${m.rank ? `<span class="rank">${m.rank}º de ${m.of}</span>` : "–"}</td></tr>`);
+    const weak = (pr.me.weak_positions || []).slice(0, 8);
+    const weakItems = weak.map((w, i) => `
+      <div class="weak" data-i="${i}">
+        <div class="head"><span><b>${esc(w.opening || "Posición")}</b> · jugada ${Math.ceil(w.ply / 2)} con ${colorName(w.color)}</span>
+          <span class="badge bad">−${fmt(w.avg_wp_loss, 1)} pts</span></div>
+        <div>Llegás ${w.occurrences} veces · solés jugar <b>${esc(w.usual_san)}</b> · el motor prefiere <b>${esc(w.best_san || "–")}</b></div>
+      </div>`);
+    const op = cmp.openings;
+    const oHeaders = ["Apertura", "Partidas", "Puntaje", "Salida (motor)", "Sobre tu Elo", "Puntos", "Confianza"];
+    root.innerHTML = `
+      ${improvementHtml(pr.improvement, "priorities")}
+      <h2>Vos vs. tus rivales</h2>
+      <p class="muted">Tus números al lado de los de tus rivales con al menos 20 partidas (todos con el mismo criterio: la calidad de juego
+        se mide en la apertura, que es lo que está analizado para todos). En verde, donde estás mejor que el promedio; en rojo, peor.</p>
+      ${table(["Métrica", "Vos", "Promedio rivales", "Mejor del grupo", "Tu puesto"], metricRows)}
+      <h2>Tus aperturas</h2>
+      <p class="muted">"Puntos": cuánto suma o resta cada apertura a tu expectativa = ventaja con que salís según el motor
+        (la señal estable) + tu rendimiento sobre el Elo, muy suavizado. Solo aperturas con al menos 8 partidas.</p>
+      <div class="split">
+        <div><h3>Mejores</h3>${table(oHeaders, openingRows(op.best))}</div>
+        <div><h3>Peores</h3>${table(oHeaders, openingRows(op.worst))}</div>
+      </div>
+      ${improvementHtml(pr.improvement, "areas")}
+      <h2>Tus posiciones flojas</h2>
+      <p class="muted">Posiciones que repetís y donde tu jugada habitual pierde. Clic: en el tablero, en rojo tu jugada y en
+        verde la del motor.</p>
+      <div class="weak-list">${weakItems.join("") || '<p class="muted">Sin posiciones flojas con evaluación todavía.</p>'}</div>`;
+    $$(".weak", root).forEach((el) => el.addEventListener("click", () => {
+      $$(".weak", root).forEach((x) => x.classList.remove("active"));
+      el.classList.add("active");
+      const w = weak[+el.dataset.i];
+      const shapes = [];
+      if (w.usual_uci) shapes.push({ orig: w.usual_uci.slice(0, 2), dest: w.usual_uci.slice(2, 4), brush: "red" });
+      if (w.best_uci && w.best_uci !== w.usual_uci) shapes.push({ orig: w.best_uci.slice(0, 2), dest: w.best_uci.slice(2, 4), brush: "green" });
+      setLine(w.line, { shapes, orientation: w.color, caption: `${w.opening || ""} · ${colorName(w.color)} juegan` });
+    }));
+  }
+
+  function renderMeEntry() {
+    const name = state.me ? (state.me.meta.me_name || state.me.meta.me) : (state.status && state.status.me) || null;
+    $("#me-block").classList.toggle("hidden", !name);
+    if (!name) return;
+    const s = state.me ? state.me.me.profile.summary : null;
+    $("#me-entry").innerHTML = `<li data-me class="${state.view === "profile" ? "active" : ""}${state.me ? "" : " no-report"}">
+      <span class="r-avatar me">${esc(name.slice(0, 1).toUpperCase())}</span>
+      <span style="min-width:0"><div class="r-name">${esc(name)}</div>
+        <div class="r-sub">${s ? `Mi perfil · ${s.games} partidas · ${fmt(s.last_rating)}` : "Mi perfil · sin generar"}</div></span></li>`;
+    $("#me-entry li").addEventListener("click", () => showProfile());
+  }
+
+  function showProfile() {
+    state.view = "profile";
+    state.tab = "profile";
+    $$("[data-tab]").forEach((b) => b.classList.remove("active"));
+    $$(".tab").forEach((t) => t.classList.toggle("hidden", t.id !== "tab-profile"));
+    $("#tabs").classList.add("hidden");
+    renderRivalList();
+    renderTab();
+    $(".main").scrollTop = 0;
   }
 
   // ---------------------------------------------------------------- Tiempo
@@ -797,10 +879,14 @@
     // Para el PDF se imprimen todas las secciones (renderizadas) una tras otra.
     if (!report()) return;
     renderHero(); renderSummary(); renderPlan(); renderPrep(); renderTime(); renderTraps(); renderOpenings(); renderWeak();
-    renderMine();
   }
 
   function openPdfDialog() {
+    if (state.view === "profile") {
+      if (!SERVER) { renderProfile(); window.print(); return; }
+      startJob("pdf", ["_me"]);
+      return;
+    }
     if (!SERVER) { renderAllForPrint(); window.print(); return; }
     const dlg = $("#pdf-dialog");
     const rivals = Object.keys(state.reports);
@@ -839,6 +925,19 @@
 
   function renderHero() {
     const hero = $("#hero");
+    if (state.view === "profile") {
+      const pr = state.me;
+      const name = pr ? (pr.meta.me_name || pr.meta.me) : "Mi perfil";
+      const s = pr ? pr.me.profile.summary : null;
+      hero.style.setProperty("--hero", "#1f6f43");
+      $("#hero-avatar").textContent = name.slice(0, 1).toUpperCase();
+      $("#hero-eyebrow").textContent = "Mi perfil";
+      $("#hero-title").textContent = name;
+      $("#hero-meta").innerHTML = s ? `<b>${s.games} partidas</b> · rating ${fmt(s.last_rating)} · comparado con
+        ${pr.comparison.players.length} rivales · generado ${esc(new Date(pr.meta.generated_at).toLocaleString())}` : "";
+      document.title = `${name} · tegchess`;
+      return;
+    }
     if (state.tab === "config") {
       hero.style.setProperty("--hero", "#3a3a3a");
       $("#hero-avatar").textContent = "⚙";
@@ -899,7 +998,7 @@
     $("#rival-list").innerHTML = entries.map((e) => {
       const r = state.reports[e.key];
       const s = r ? r.rival.profile.summary : null;
-      return `<li data-rival="${esc(e.key)}" class="${e.key === state.rival && state.tab !== "config" ? "active" : ""}${r ? "" : " no-report"}">
+      return `<li data-rival="${esc(e.key)}" class="${e.key === state.rival && state.tab !== "config" && state.view !== "profile" ? "active" : ""}${r ? "" : " no-report"}">
         <span class="r-avatar" style="--c:${rivalColor(e.key)}">${esc(e.name.slice(0, 1).toUpperCase())}</span>
         <span style="min-width:0"><div class="r-name">${esc(e.name)}</div>
           <div class="r-sub">${s ? `${s.games} partidas · ${fmt(s.last_rating)}` : "sin informe todavía"}</div></span>
@@ -913,21 +1012,31 @@
     $$("#rival-list li[data-rival]").forEach((li) => li.addEventListener("click", () => {
       state.rival = li.dataset.rival;
       state.tree.path = [];
-      if (state.tab === "config") showTab("summary"); else { renderRivalList(); renderTab(); }
+      if (state.tab === "config" || state.view === "profile") { state.view = "rival"; showTab("summary"); }
+      else { renderRivalList(); renderTab(); }
       $(".main").scrollTop = 0;
     }));
   }
 
   function showTab(tab) {
+    if (tab !== "profile") state.view = tab === "config" ? state.view : "rival";
     state.tab = tab;
     $$("[data-tab]").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
     $$(".tab").forEach((t) => t.classList.toggle("hidden", t.id !== "tab-" + tab));
     $("#tabs").classList.toggle("hidden", tab === "config");
+    if (tab === "config") state.view = "config";
     renderRivalList();
     renderTab();
   }
 
   function renderTab() {
+    renderMeEntry();
+    if (state.view === "profile") {
+      renderHero();
+      $("#empty").classList.add("hidden");
+      $("#print-btn").classList.toggle("hidden", !state.me);
+      return renderProfile();
+    }
     const hasReport = !!(state.rival && report());
     renderHero();
     $("#print-btn").classList.toggle("hidden", !hasReport || state.tab === "config");
@@ -937,7 +1046,7 @@
     $$(".tab").forEach((t) => { if (!hasReport && t.id !== "tab-config") t.innerHTML = ""; });
     if (!hasReport) return;
     ({ summary: renderSummary, plan: renderPlan, prep: renderPrep, time: renderTime, traps: renderTraps,
-      openings: renderOpenings, tree: renderTree, weak: renderWeak, mine: renderMine })[state.tab]();
+      openings: renderOpenings, tree: renderTree, weak: renderWeak })[state.tab]();
   }
 
   function renderEmpty() {
@@ -1022,13 +1131,15 @@
   async function loadReports(only = null) {
     let rivals = [];
     if (STATIC) {
-      state.reports = STATIC;
-      rivals = Object.keys(STATIC);
+      state.me = STATIC._me || null;
+      state.reports = Object.fromEntries(Object.entries(STATIC).filter(([k]) => !k.startsWith("_")));
+      rivals = Object.keys(state.reports);
     } else if (SERVER) {
       if (!only) {
         state.status = await api("/api/status");
         applySource();
       }
+      if (!only) state.me = await api("/api/me").catch(() => null);
       rivals = only ? [only] : (await api("/api/reports")).map((r) => r.rival);
       const loaded = {};
       await Promise.all(rivals.map(async (r) => { loaded[r] = await api("/api/reports/" + encodeURIComponent(r)); }));
@@ -1049,7 +1160,9 @@
   const PRINT = new URLSearchParams(location.search).get("print");
   if (!SERVER) $$(".server-only").forEach((el) => el.classList.add("hidden"));
   setLine([]);
-  if (PRINT) {
+  if (PRINT === "_me") {
+    loadReports().then(() => { showProfile(); document.body.dataset.ready = "1"; });
+  } else if (PRINT) {
     state.rival = PRINT.toLowerCase();
     loadReports(STATIC ? null : state.rival).then(() => {
       renderAllForPrint();
