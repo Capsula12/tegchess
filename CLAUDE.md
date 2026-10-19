@@ -47,6 +47,7 @@ Para probar sin tocar los datos del usuario: apuntar `TEGCHESS_CONFIG` a un yaml
 | `analysis/prep.py` | preparación: línea principal del rival, predictibilidad, líneas para memorizar |
 | `analysis/comparison.py` | mi perfil: mis métricas vs. las de mis rivales, mejores y peores aperturas |
 | `analysis/improvement.py` | "Mi juego": áreas a mejorar ordenadas por puntos cada 100 partidas |
+| `analysis/training.py` | entrenar aperturas: ejercicios de mis partidas y del rival, repetición espaciada, `data/training.json` |
 | `analysis/traps.py` | trampas: error habitual + refutación (multipv 3), ordenadas por valor esperado |
 | `analysis/clock.py` | manejo del tiempo: caídas por reloj, apuros, tiempo por fase, calidad con poco reloj |
 | `analysis/lines.py` | línea para llegar a una posición, SAN, variantes numeradas |
@@ -78,6 +79,8 @@ Para probar sin tocar los datos del usuario: apuntar `TEGCHESS_CONFIG` a un yaml
   de las tareas; los informes se sirven desde los JSON. No correr `tegchess analyze` mientras la interfaz
   está procesando.
 - El servidor manda `Cache-Control: no-store`: sin eso el navegador mostraba informes viejos después de regenerarlos.
+- Tablero (chessground): se crea manipulable pero sin jugadas permitidas; si se crea `viewOnly`, nunca escucha el
+  mouse aunque después se lo habilite. El entrenamiento habilita las jugadas con `enableMove`.
 - Columnas JSON (`evals.lines`): pasar objetos Python a `db.bulk_insert`, no strings ya serializados
   (si no, quedan doblemente codificados; `traps._lines` tolera filas viejas así).
 - `web/` tiene que funcionar con `file://` (exportación estática): nada de módulos ES.

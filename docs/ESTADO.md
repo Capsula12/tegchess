@@ -30,6 +30,10 @@
   posiciones flojas. Mis partidas se analizan completas (`engine.analyse_my_games_fully`, ~20 min la primera vez).
   - **Tiempo**: caídas por reloj, apuros (< 10% del tiempo inicial), reloj restante por jugada, tiempo por fase,
     pensadas largas y calidad de juego con poco reloj, comparado con el mío. Las ideas salen también en el plan.
+- **Entrenar aperturas** (barra lateral → Yo; empieza la etapa 2): ejercicios con las posiciones de mis partidas
+  (línea principal, correcciones de jugadas habituales que pierden y desvíos) y, por rival, sus trampas y mis líneas
+  de preparación. Se juega en el tablero (jugadas legales precalculadas); repetición espaciada tipo Leitner
+  (1, 3, 7, 14, 30, 60 días). Progreso en `data/training.json` por modo (o en el navegador en la exportación estática).
 - **Tablero**: cada cosa que se abre dice qué es ("Tu preparación", "Línea del rival", "Trampa para vos"...), mira
   desde el lado de quien juega esa línea (vos o el rival), con los nombres y colores arriba y abajo, y muestra la
   barra de evaluación de Stockfish con las evaluaciones ya guardadas (no corre un motor en el navegador).
@@ -70,10 +74,11 @@ Preguntas del enunciado original y cobertura:
 3. Recalibrar los pesos de `analysis/expectation.py` cuando haya más datos (el backtest está descripto en
    `docs/PROPUESTA_ANALISIS.md`; convendría pasarlo a un módulo `analysis/calibration.py` con su test).
 4. Mejoras de interfaz: navegar variantes del motor en el tablero, filtros por modalidad o fecha en el informe.
-5. **Estudios de Lichess**: exportar el plan, las trampas y las líneas como PGN con comentarios y flechas
+5. Entrenamiento: estadísticas por apertura de lo entrenado, ejercicios de "seguir la línea" varias jugadas seguidas.
+6. **Estudios de Lichess**: exportar el plan, las trampas y las líneas como PGN con comentarios y flechas
    (`[%cal]`), un capítulo por línea, e importarlos con `POST /api/study/{id}/import-pgn` (token con
    `study:write`, hasta 64 capítulos por estudio).
-6. Etapa 2 (no empezada): práctica con repetición espaciada sobre las posiciones de `repeated_positions`
+7. Etapa 2: práctica con repetición espaciada sobre las posiciones de `repeated_positions`
    y desvíos de repertorio; actualización automática al detectar partidas nuevas.
 
 ## Para revisar
