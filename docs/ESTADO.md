@@ -22,9 +22,10 @@
   - **Preparación**: su línea más jugada (hasta donde la probabilidad de que la siga es ≥ 25%), qué tan predecible
     es y líneas para memorizar ordenadas por probabilidad de llegar × ventaja (`analysis/prep.py`).
   - **Trampas** ordenadas por valor esperado: P(llega) × P(se equivoca) × ganancia × facilidad.
-  - **Mi juego**: áreas a mejorar ordenadas por puntos cada 100 partidas (reloj, aperturas, conversión, errores por
-    fase y tipo, oportunidades perdidas, tilt/sesiones, finales). Mis partidas se analizan completas
-    (`engine.analyse_my_games_fully`, ~20 min la primera vez).
+- **Mi perfil** (barra lateral → Yo; `data/reports/_me.json`): prioridades, mis métricas contra las de mis rivales
+  (promedio, mejor del grupo y mi puesto; solo rivales con ≥ 20 partidas), mejores y peores aperturas, qué mejorar
+  (reloj, aperturas, conversión, errores por fase y tipo, oportunidades perdidas, tilt/sesiones, finales) y mis
+  posiciones flojas. Mis partidas se analizan completas (`engine.analyse_my_games_fully`, ~20 min la primera vez).
   - **Tiempo**: caídas por reloj, apuros (< 10% del tiempo inicial), reloj restante por jugada, tiempo por fase,
     pensadas largas y calidad de juego con poco reloj, comparado con el mío. Las ideas salen también en el plan.
 - Interfaz local (`run.bat`), oscura estilo reproductor de música: rivales en la barra lateral, Descargar / Analizar /

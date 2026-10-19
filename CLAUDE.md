@@ -45,6 +45,7 @@ Para probar sin tocar los datos del usuario: apuntar `TEGCHESS_CONFIG` a un yaml
 | `analysis/expectation.py` | expectativa por Elo + ajustes (motor 0,6, residuo suavizado K=30), intervalos, forma |
 | `analysis/crossover.py` | cruce yo vs. rival: familias, posiciones compartidas, puntaje esperado sobre la base de Elo |
 | `analysis/prep.py` | preparación: línea principal del rival, predictibilidad, líneas para memorizar |
+| `analysis/comparison.py` | mi perfil: mis métricas vs. las de mis rivales, mejores y peores aperturas |
 | `analysis/improvement.py` | "Mi juego": áreas a mejorar ordenadas por puntos cada 100 partidas |
 | `analysis/traps.py` | trampas: error habitual + refutación (multipv 3), ordenadas por valor esperado |
 | `analysis/clock.py` | manejo del tiempo: caídas por reloj, apuros, tiempo por fase, calidad con poco reloj |
@@ -76,6 +77,7 @@ Para probar sin tocar los datos del usuario: apuntar `TEGCHESS_CONFIG` a un yaml
   (ni siquiera se puede abrir en solo lectura desde otro proceso). El servidor abre la base solo dentro
   de las tareas; los informes se sirven desde los JSON. No correr `tegchess analyze` mientras la interfaz
   está procesando.
+- El servidor manda `Cache-Control: no-store`: sin eso el navegador mostraba informes viejos después de regenerarlos.
 - Columnas JSON (`evals.lines`): pasar objetos Python a `db.bulk_insert`, no strings ya serializados
   (si no, quedan doblemente codificados; `traps._lines` tolera filas viejas así).
 - `web/` tiene que funcionar con `file://` (exportación estática): nada de módulos ES.
