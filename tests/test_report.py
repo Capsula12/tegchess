@@ -30,6 +30,10 @@ def test_build_report_structure(con, tmp_path, raw_games):
     assert rep["rival"]["profile"]["summary"]["games"] == 1
     assert rep["me"]["profile"]["summary"]["games"] == len(raw_games)
     assert set(rep["rival"]["trees"]) == {"white", "black"}
+    # Cada posición que puede ir al tablero trae su evaluación (aunque sea None) para la barra.
+    node = rep["rival"]["trees"]["white"]
+    assert "cp" in node and "mate" in node and "start_cp" in rep["meta"]
+    assert all("cp" in c for c in node["children"])
     # Serializable y exportable a HTML estático.
     path = write_report(rep, cfg.reports_path)
     assert json.loads(path.read_text(encoding="utf-8"))["meta"]["rival"] == "lucky09"

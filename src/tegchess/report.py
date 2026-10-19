@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import chess
 import duckdb
 
 from tegchess import __version__
@@ -36,6 +37,7 @@ from tegchess.analysis.scope import scope_cte
 from tegchess.config import PROJECT_ROOT, Config, normalize_player, report_key
 from tegchess.db import fetch_dicts
 from tegchess.engine import ensure_best_moves, epd_to_fen
+from tegchess.metrics import eval_cp
 
 WEB_DIR = PROJECT_ROOT / "web"
 COLORS = ("white", "black")
@@ -267,6 +269,39 @@ def build_plan(matchup: dict[str, Any] | None, traps: list[dict[str, Any]], time
 ME_KEY = "_me"   # archivo del perfil propio (los ids de jugador nunca empiezan con "_")
 
 
+def attach_evals(con: duckdb.DuckDBPyConnection, report: dict[str, Any]) -> None:
+    """Agrega la evaluación guardada a cada posición del informe que el tablero puede mostrar.
+
+    Toda jugada de una línea y todo nodo del explorador son dicts con "fen" y "san": se les suma "cp"
+    (desde blancas, acotado a ±1000) y "mate". Así la barra de evaluación no necesita motor en el navegador.
+    """
+    found: list[dict[str, Any]] = []
+
+    def walk(obj: Any) -> None:
+        if isinstance(obj, dict):
+            if "fen" in obj and "san" in obj:
+                found.append(obj)
+            for v in obj.values():
+                walk(v)
+        elif isinstance(obj, list):
+            for v in obj:
+                walk(v)
+
+    walk(report)
+    epds = list({" ".join(d["fen"].split()[:4]) for d in found} | {chess.Board().epd()})
+    evals: dict[str, tuple[int | None, int | None]] = {}
+    for i in range(0, len(epds), 1000):
+        chunk = epds[i:i + 1000]
+        for epd, cp, mate in con.execute(
+            f"SELECT epd, cp, mate FROM evals WHERE epd IN ({','.join('?' for _ in chunk)})", chunk
+        ).fetchall():
+            evals[epd] = (eval_cp(cp, mate), mate)
+    for d in found:
+        cp, mate = evals.get(" ".join(d["fen"].split()[:4]), (None, None))
+        d["cp"], d["mate"] = cp, mate
+    report.setdefault("meta", {})["start_cp"] = evals.get(chess.Board().epd(), (None, None))[0]
+
+
 def _tree_epds(node: dict[str, Any]) -> set[str]:
     out = {" ".join(node["fen"].split()[:4])}
     for child in node["children"]:
@@ -309,7 +344,7 @@ def build_me_report(con: duckdb.DuckDBPyConnection, cfg: Config, cache: dict[str
     if "me" not in cache:
         cache["me"] = me_section(con, cfg, me)
     sec = cache["me"]
-    return {
+    report = {
         "meta": {
             "version": __version__,
             "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -321,6 +356,8 @@ def build_me_report(con: duckdb.DuckDBPyConnection, cfg: Config, cache: dict[str
         "improvement": improvement_section(con, cfg, me, sec["profile"]["time"]),
         "comparison": profile_comparison(con, cfg),
     }
+    attach_evals(con, report)
+    return report
 
 
 def build_report(con: duckdb.DuckDBPyConnection, cfg: Config, rival: str,
@@ -353,7 +390,7 @@ def build_report(con: duckdb.DuckDBPyConnection, cfg: Config, rival: str,
         JOIN games g ON g.id = m.game_id
         WHERE (g.white = ? OR g.black = ?) AND (m.ply <= {int(cfg.engine.max_ply)} OR {int(cfg.engine.max_ply)} = 0)
     """, [rival, rival]).fetchone()
-    return {
+    report = {
         "meta": {
             "version": __version__,
             "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -379,6 +416,8 @@ def build_report(con: duckdb.DuckDBPyConnection, cfg: Config, rival: str,
         "matchup": matchup,
         "plan": build_plan(matchup, rival_section["traps"], rival_section["profile"]["time"]["hints"], prep, base),
     }
+    attach_evals(con, report)
+    return report
 
 
 def _json_default(o: Any) -> Any:
