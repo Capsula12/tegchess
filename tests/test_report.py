@@ -59,6 +59,10 @@ def test_server_endpoints(con, tmp_path, raw_games, monkeypatch):
     assert client.get("/api/reports/..%2Fconfig").status_code == 404
     assert client.get("/api/reports").headers["cache-control"] == "no-store"
     assert client.get("/api/me").status_code == 404   # todavía no se generó el perfil propio
+    assert client.get("/api/training").json() == {}
+    assert client.post("/api/training", json={"id": "x", "result": "right"}).json()["box"] == 1
+    assert client.get("/api/training").json()["x"]["right"] == 1
+    assert client.post("/api/training", json={"id": "x", "result": "maso"}).status_code == 422
     assert client.get("/api/config").json()["me"] == "german11"
     new = client.get("/api/config").json()
     new["opponents"] = ["a", "b"]

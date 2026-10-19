@@ -32,6 +32,7 @@ from tegchess.analysis.improvement import improvement_section
 from tegchess.analysis.lines import line_to, san
 from tegchess.analysis.openings import opening_summary, repeated_positions, repertoire_tree
 from tegchess.analysis.prep import prep_section
+from tegchess.analysis.training import repertoire_exercises, rival_exercises
 from tegchess.analysis.traps import find_traps
 from tegchess.analysis.scope import scope_cte
 from tegchess.config import PROJECT_ROOT, Config, normalize_player, report_key
@@ -355,6 +356,7 @@ def build_me_report(con: duckdb.DuckDBPyConnection, cfg: Config, cache: dict[str
         "me": sec,
         "improvement": improvement_section(con, cfg, me, sec["profile"]["time"]),
         "comparison": profile_comparison(con, cfg),
+        "training": {"exercises": repertoire_exercises(con, cfg, me)},
     }
     attach_evals(con, report)
     return report
@@ -413,6 +415,8 @@ def build_report(con: duckdb.DuckDBPyConnection, cfg: Config, rival: str,
         "base": base,
         "prep": prep,
         "tree_overlap": overlap,
+        # Entrenar antes de jugarle: sus trampas y mis líneas de preparación (con mi color).
+        "training": {"exercises": rival_exercises(rival_section["traps"], prep)} if has_me else None,
         "matchup": matchup,
         "plan": build_plan(matchup, rival_section["traps"], rival_section["profile"]["time"]["hints"], prep, base),
     }

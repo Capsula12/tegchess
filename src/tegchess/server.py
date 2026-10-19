@@ -19,10 +19,16 @@ from pydantic import BaseModel, ValidationError
 from tegchess import pipeline
 from tegchess.pdf import PDF_DIR, export_pdfs
 from tegchess.config import Config, find_stockfish, lichess_token, load_config, normalize_player, report_key, save_config
+from tegchess.analysis.training import TrainingStore
 from tegchess.pgn_import import search_players
 from tegchess.report import WEB_DIR
 
 log = logging.getLogger(__name__)
+
+
+class TrainingResult(BaseModel):
+    id: str
+    result: str                        # right | wrong
 
 
 class JobRequest(BaseModel):
@@ -143,6 +149,23 @@ def create_app() -> FastAPI:
         if not path.exists():
             raise HTTPException(404, "Todavía no hay perfil propio: generá los informes")
         return FileResponse(path, media_type="application/json")
+
+    def training_store() -> tuple[TrainingStore, str]:
+        cfg = load_config()
+        return TrainingStore(cfg.data_path / "training.json"), cfg.source
+
+    @app.get("/api/training")
+    def training_cards() -> dict[str, Any]:
+        """Progreso del entrenamiento de aperturas (modo actual): {id de ejercicio: tarjeta}."""
+        store, mode = training_store()
+        return store.cards(mode)
+
+    @app.post("/api/training")
+    def training_record(req: TrainingResult) -> dict[str, Any]:
+        if req.result not in ("right", "wrong"):
+            raise HTTPException(422, "result tiene que ser right o wrong")
+        store, mode = training_store()
+        return store.record(mode, req.id, req.result)
 
     @app.get("/api/players")
     def players(q: str = "", limit: int = 30) -> list[dict[str, Any]]:
