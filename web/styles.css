@@ -224,8 +224,31 @@ td.verdict-peor { color: var(--bad); font-weight: 700; }
 .legend-inline i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
 
 /* ------------------------------------------------------------------ tablero */
-.panel-title { font-weight: 700; margin-bottom: 12px; }
+/* Qué muestra el tablero, de quién es cada lado y la evaluación. */
+.board-context { background: var(--surface); border-radius: var(--radius); padding: 10px 12px; margin-bottom: 10px;
+  border-left: 3px solid var(--muted); }
+.board-context.good { border-left-color: var(--good); }
+.board-context.info { border-left-color: var(--info); }
+.board-context.bad { border-left-color: var(--bad); }
+.board-context.warn { border-left-color: var(--warn); }
+.board-context .badge { text-transform: uppercase; letter-spacing: .5px; }
+.board-context .ctx-title { margin-top: 6px; font-size: 13px; line-height: 1.45; }
+.player-tag { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 4px 2px 4px 26px; font-size: 13px; }
+.player-tag:empty { visibility: hidden; }
+.player-tag .chip { width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--muted); flex: none; }
+.player-tag .chip.white { background: #f2f2f2; }
+.player-tag .chip.black { background: #1a1a1a; }
+.player-tag .name { font-weight: 700; }
+.player-tag .role { color: var(--muted); }
+.player-tag .role.me { color: var(--accent); font-weight: 700; }
+.board-row { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 8px; }
 #board { width: 100%; aspect-ratio: 1 / 1; border-radius: 6px; overflow: hidden; }
+.evalbar { position: relative; border-radius: 4px; overflow: hidden; background: #2b2b2b; border: 1px solid var(--surface-3); }
+.evalbar-fill { position: absolute; left: 0; right: 0; bottom: 0; height: 50%; background: #f2f2f2; transition: height .3s; }
+.evalbar.flipped .evalbar-fill { bottom: auto; top: 0; }
+.evalbar.empty { opacity: .35; }
+.eval-text { font-size: 12px; color: var(--muted); text-align: center; margin-top: 4px; min-height: 16px; }
+.eval-text b { color: var(--text); }
 .board-controls { display: flex; gap: 8px; justify-content: center; align-items: center; margin: 14px 0 8px; }
 .board-controls button { background: transparent; color: var(--muted); font-size: 16px; width: 36px; height: 36px; padding: 0; border-radius: 50%; }
 .board-controls button:hover { color: var(--text); background: transparent; }

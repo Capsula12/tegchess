@@ -40,14 +40,76 @@
     drawable: { enabled: false, visible: true },
   });
 
-  function setLine(line, { startFen = START_FEN, idx = null, shapes = null, orientation = null, caption = "" } = {}) {
+  // view: qué se muestra y de quién es cada lado (ver boardView). El tablero mira desde view.bottom.
+  function setLine(line, { startFen = START_FEN, idx = null, shapes = null, orientation = null, caption = "", view = null } = {}) {
     state.line = line;
     state.lineStart = startFen;
     state.idx = idx === null ? line.length - 1 : idx;
     state.shapesAt = shapes ? { idx: state.idx, shapes } : null;
-    if (orientation) state.orientation = orientation;
+    state.view_board = view;
+    if (view) state.orientation = view.bottom.color;
+    else if (orientation) state.orientation = orientation;
     $("#board-caption").textContent = caption;
+    renderContext();
     renderBoard();
+  }
+
+  // subject: de quién es lo que se muestra ("me" | "rival"); color: con qué juega. El sujeto va abajo.
+  // other: quién está enfrente (por defecto, el otro: vos o el rival).
+  function boardView(subject, color, label, cls, title, other = null) {
+    const myName = (report() && MNAME()) || (state.me && (state.me.meta.me_name || state.me.meta.me)) || "Vos";
+    const rivalName = report() ? RNAME() : "Rival";
+    const opp = color === "white" ? "black" : "white";
+    const side = (who, c, generic) => ({
+      name: generic || (who === "me" ? myName : rivalName),
+      role: generic ? "" : who === "me" ? "vos" : "rival",
+      color: c,
+    });
+    const otherWho = subject === "me" ? "rival" : "me";
+    return { label, cls, title, bottom: side(subject, color), top: side(otherWho, opp, other) };
+  }
+
+  function renderContext() {
+    const v = state.view_board;
+    const box = $("#board-context");
+    box.className = "board-context" + (v && v.cls ? " " + v.cls : "");
+    box.innerHTML = v
+      ? `<span class="badge ${v.cls || ""}">${esc(v.label)}</span><div class="ctx-title">${v.title}</div>`
+      : '<span class="badge">Tablero</span><div class="ctx-title">Tocá una línea o una posición del informe para verla acá.</div>';
+  }
+
+  function playerTag(p) {
+    if (!p) return "";
+    return `<span class="chip ${p.color}"></span><span class="name">${esc(p.name)}</span>
+      <span class="role ${p.role === "vos" ? "me" : ""}">${p.role ? p.role + " · " : ""}${colorName(p.color)}</span>`;
+  }
+
+  function renderPlayers() {
+    const v = state.view_board;
+    if (!v) { $("#player-top").innerHTML = ""; $("#player-bottom").innerHTML = ""; return; }
+    // Si se gira el tablero, los nombres giran con él.
+    const flipped = state.orientation !== v.bottom.color;
+    $("#player-top").innerHTML = playerTag(flipped ? v.bottom : v.top);
+    $("#player-bottom").innerHTML = playerTag(flipped ? v.top : v.bottom);
+  }
+
+  function renderEval(cur) {
+    const cp = cur ? cur.cp : (state.lineStart === START_FEN ? (report() || state.me || { meta: {} }).meta.start_cp : null);
+    const mate = cur ? cur.mate : null;
+    const bar = $("#evalbar");
+    bar.classList.toggle("flipped", state.orientation === "black");
+    const has = cp !== null && cp !== undefined;
+    bar.classList.toggle("empty", !has);
+    // Misma fórmula de % de victoria que Lichess: la barra muestra cuánto "pesa" cada lado.
+    const white = has ? 50 + 50 * (2 / (1 + Math.exp(-0.00368208 * cp)) - 1) : 50;
+    $(".evalbar-fill", bar).style.height = `${white}%`;
+    let text = state.view_board || state.line.length ? "sin evaluación guardada para esta posición" : "";
+    if (mate) text = `<b>Mate en ${Math.abs(mate)}</b> para las ${mate > 0 ? "blancas" : "negras"}`;
+    else if (has) {
+      const who = Math.abs(cp) < 30 ? "igualado" : `mejor ${cp > 0 ? "blancas" : "negras"}`;
+      text = `Stockfish: <b>${cp > 0 ? "+" : ""}${(cp / 100).toFixed(2)}</b> (${who})`;
+    }
+    $("#eval-text").innerHTML = text;
   }
 
   function renderBoard() {
@@ -56,6 +118,8 @@
     const lastMove = cur && cur.uci ? [cur.uci.slice(0, 2), cur.uci.slice(2, 4)] : undefined;
     cg.set({ fen, lastMove, orientation: state.orientation, turnColor: fen.split(" ")[1] === "w" ? "white" : "black" });
     cg.setAutoShapes(state.shapesAt && state.shapesAt.idx === state.idx ? state.shapesAt.shapes : []);
+    renderPlayers();
+    renderEval(cur);
     renderMoveList();
   }
 
@@ -206,8 +270,8 @@
     linea: ["Línea", "good"], trampa: ["Trampa", "good"], evitar: ["Evitar", "bad"], reforzar: ["Reforzar", "warn"],
   };
 
-  function showItem(item, color, caption) {
-    setLine(item.line || [], { idx: item.idx ?? null, shapes: item.shapes || null, orientation: color, caption });
+  function showItem(item, color, caption, view = null) {
+    setLine(item.line || [], { idx: item.idx ?? null, shapes: item.shapes || null, orientation: color, caption, view });
   }
 
   function battleRows(list, color) {
@@ -271,7 +335,11 @@
       $$(".plan-item", root).forEach((x) => x.classList.remove("active"));
       el.classList.add("active");
       const it = items[+el.dataset.i];
-      showItem(it, color, KIND[it.kind]?.[0] || "");
+      const label = { preparar: "Tu preparación", trampa: "Trampa para vos", evitar: "Posición a evitar",
+        reforzar: "Para reforzar", linea: "Línea sugerida", apertura: "Apertura" }[it.kind] || "Plan de partida";
+      const cls = KIND[it.kind]?.[1] || "";
+      showItem(it, color, KIND[it.kind]?.[0] || "", boardView("me", color, label, cls,
+        `Vos con <b>${colorName(color)}</b> contra ${esc(RNAME())}. ${esc(it.text)}`));
     }));
     $$("[data-battles]", root).forEach((box) => {
       const list = m[box.dataset.battles];
@@ -279,7 +347,13 @@
         const b = list[+tr.dataset.i];
         const opt = (b.options || [])[0];
         const shapes = b.to_move === "me" && opt ? [{ orig: opt.uci.slice(0, 2), dest: opt.uci.slice(2, 4), brush: "green" }] : null;
-        showItem({ line: b.line, shapes }, color, `${b.opening || ""} · esperado ${fmt(b.expected_pct)}%`);
+        const fav = box.dataset.battles === "favorable";
+        const turn = b.to_move === "me" ? (opt ? `te toca a vos: en verde, <b>${esc(opt.san)}</b>` : "te toca a vos")
+          : `le toca a ${esc(RNAME())} (suele jugar <b>${esc(b.usual_san || "–")}</b>)`;
+        showItem({ line: b.line, shapes }, color, `${b.opening || ""} · esperado ${fmt(b.expected_pct)}%`,
+          boardView("me", color, fav ? "Posición favorable" : "Posición a evitar", fav ? "good" : "bad",
+            `Vos con <b>${colorName(color)}</b> contra ${esc(RNAME())}: ${esc(b.opening || "posición")} a la que llegan los dos;
+             ${turn}. Esperado ${fmt(b.expected_pct)}%.`));
       }));
     });
   }
@@ -332,13 +406,21 @@
         líneas que repita al menos 3 veces y donde quedes claramente mejor que lo normal para tu color (o donde él se equivoque).
         No es un error del análisis: o juega sólido en lo que repite o faltan partidas. Igual sirve conocer su línea principal.</p>`}</div>`;
     bindSeg(root, "prc", (v) => { state.prepColor = v; renderPrep(); });
-    $("#prep-main", root).addEventListener("click", () => setLine(ml, { orientation: color, caption: `Línea principal de ${RNAME()}` }));
+    const rivalColor = color === "white" ? "black" : "white";
+    $("#prep-main", root).addEventListener("click", () => setLine(ml, { caption: `Línea principal de ${RNAME()}`,
+      view: boardView("rival", rivalColor, "Línea del rival", "info",
+        `Lo que juega <b>${esc(RNAME())}</b> con <b>${colorName(rivalColor)}</b> casi siempre (vos jugarías con ${colorName(color)}):
+         su jugada más frecuente y la respuesta más común de sus rivales, mientras la siga más del 25% de las veces.`) }));
     $$(".weak", root).forEach((el) => el.addEventListener("click", () => {
       $$(".weak", root).forEach((x) => x.classList.remove("active"));
       el.classList.add("active");
       const t = targets[+el.dataset.i];
       const shapes = t.best_reply_uci ? [{ orig: t.best_reply_uci.slice(0, 2), dest: t.best_reply_uci.slice(2, 4), brush: "green" }] : null;
-      setLine(t.line, { shapes, orientation: color, caption: `Preparación · llega ${fmt(t.reach_pct)}%` });
+      setLine(t.line, { shapes, caption: `Preparación · llega ${fmt(t.reach_pct)}%`,
+        view: boardView("me", color, "Tu preparación", "good",
+          `Línea para jugar vos con <b>${colorName(color)}</b> contra ${esc(RNAME())}. Él llega a esta posición el
+           ${fmt(t.reach_pct)}% de las veces y quedás ${evalTxt(t.eval_for_me)}. ${t.my_moves} jugadas tuyas para memorizar;
+           en verde, cómo seguir.`) });
     }));
   }
 
@@ -464,7 +546,10 @@
       const shapes = [];
       if (w.usual_uci) shapes.push({ orig: w.usual_uci.slice(0, 2), dest: w.usual_uci.slice(2, 4), brush: "red" });
       if (w.best_uci && w.best_uci !== w.usual_uci) shapes.push({ orig: w.best_uci.slice(0, 2), dest: w.best_uci.slice(2, 4), brush: "green" });
-      setLine(w.line, { shapes, orientation: w.color, caption: `${w.opening || ""} · ${colorName(w.color)} juegan` });
+      setLine(w.line, { shapes, caption: `${w.opening || ""} · ${colorName(w.color)} juegan`,
+        view: boardView("me", w.color, "Tu posición floja", "warn",
+          `Una posición tuya con <b>${colorName(w.color)}</b> (${esc(w.opening || "")}): en rojo lo que solés jugar
+           (<b>${esc(w.usual_san)}</b>), en verde lo que prefiere el motor (<b>${esc(w.best_san || "–")}</b>).`, "Tus rivales") });
     }));
   }
 
@@ -614,7 +699,10 @@
       const t = list[+el.dataset.i];
       showItem({ line: t.line, idx: t.line_mistake_index,
         shapes: [{ orig: t.refutation_uci.slice(0, 2), dest: t.refutation_uci.slice(2, 4), brush: "green" }] },
-        t.punisher_color, `Trampa: ${t.opening || ""}`);
+        t.punisher_color, `Trampa: ${t.opening || ""}`,
+        boardView("me", t.punisher_color, "Trampa para vos", "good",
+          `Vos con <b>${colorName(t.punisher_color)}</b> contra ${esc(RNAME())}. Acaba de jugar <b>${esc(t.usual_san)}</b>
+           (su error habitual); en verde, el castigo: <b>${esc(t.refutation_san)}</b>. Con → seguís la variante.`));
     }));
   }
 
@@ -713,8 +801,11 @@
     $$("tr[data-uci]", root).forEach((tr) => tr.addEventListener("click", () => {
       state.tree.path.push(tr.dataset.uci); renderTree();
     }));
-    const line = nodes.slice(1).map((n) => ({ san: n.san, uci: n.uci, fen: n.fen }));
-    setLine(line, { orientation: state.tree.color, caption: `Explorador: ${whoName(who)} con ${colorName(state.tree.color)}` });
+    const line = nodes.slice(1).map((n) => ({ san: n.san, uci: n.uci, fen: n.fen, cp: n.cp, mate: n.mate }));
+    setLine(line, { caption: `Explorador: ${whoName(who)} con ${colorName(state.tree.color)}`,
+      view: boardView(isMe ? "me" : "rival", state.tree.color, isMe ? "Tu repertorio" : "Repertorio del rival", "info",
+        `Explorador: las partidas de <b>${isMe ? "vos" : esc(RNAME())}</b> con <b>${colorName(state.tree.color)}</b>,
+         en la posición a la que llegaste haciendo clic.`, isMe ? "Tus rivales" : "Sus rivales") });
   }
 
   // ---------------------------------------------------------------- Posiciones flojas
@@ -746,7 +837,13 @@
       const shapes = [];
       if (w.usual_uci) shapes.push({ orig: w.usual_uci.slice(0, 2), dest: w.usual_uci.slice(2, 4), brush: "red" });
       if (w.best_uci && w.best_uci !== w.usual_uci) shapes.push({ orig: w.best_uci.slice(0, 2), dest: w.best_uci.slice(2, 4), brush: "green" });
-      setLine(w.line, { shapes, orientation: w.color, caption: `${w.opening || ""} · ${colorName(w.color)} juegan` });
+      const mine = who === "me";
+      setLine(w.line, { shapes, caption: `${w.opening || ""} · ${colorName(w.color)} juegan`,
+        view: boardView(mine ? "me" : "rival", w.color, mine ? "Tu posición floja" : "Posición floja del rival",
+          mine ? "warn" : "bad",
+          `Posición de <b>${mine ? "vos" : esc(RNAME())}</b> con <b>${colorName(w.color)}</b> (${esc(w.opening || "")}):
+           en rojo lo que ${mine ? "solés" : "suele"} jugar (<b>${esc(w.usual_san)}</b>), en verde lo que prefiere el motor
+           (<b>${esc(w.best_san || "–")}</b>).`, mine ? "Tus rivales" : "Sus rivales") });
     }));
   }
 

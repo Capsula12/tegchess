@@ -89,8 +89,19 @@
     </main>
 
     <aside class="board-panel">
-      <div class="panel-title">Tablero</div>
-      <div id="board" class="cg-wrap"></div>
+      <div id="board-context" class="board-context">
+        <span class="badge">Tablero</span>
+        <div class="ctx-title">Tocá una línea o una posición del informe para verla acá.</div>
+      </div>
+      <div id="player-top" class="player-tag"></div>
+      <div class="board-row">
+        <div id="evalbar" class="evalbar" title="Evaluación de Stockfish (guardada en el análisis)">
+          <div class="evalbar-fill"></div>
+        </div>
+        <div id="board" class="cg-wrap"></div>
+      </div>
+      <div id="player-bottom" class="player-tag"></div>
+      <div id="eval-text" class="eval-text"></div>
       <div class="board-controls">
         <button data-nav="first" title="Inicio">⏮</button>
         <button data-nav="prev" title="Anterior (←)">◀</button>

@@ -30,6 +30,9 @@
   posiciones flojas. Mis partidas se analizan completas (`engine.analyse_my_games_fully`, ~20 min la primera vez).
   - **Tiempo**: caídas por reloj, apuros (< 10% del tiempo inicial), reloj restante por jugada, tiempo por fase,
     pensadas largas y calidad de juego con poco reloj, comparado con el mío. Las ideas salen también en el plan.
+- **Tablero**: cada cosa que se abre dice qué es ("Tu preparación", "Línea del rival", "Trampa para vos"...), mira
+  desde el lado de quien juega esa línea (vos o el rival), con los nombres y colores arriba y abajo, y muestra la
+  barra de evaluación de Stockfish con las evaluaciones ya guardadas (no corre un motor en el navegador).
 - Interfaz local (`run.bat`), oscura estilo reproductor de música: rivales en la barra lateral, Descargar / Analizar /
   Generar informes / Todo, progreso en una barra inferior.
 - **Modo PGN** (Configuración → Origen de las partidas): usa los PGN de `data/pgn/` (p.ej. exportados de la
