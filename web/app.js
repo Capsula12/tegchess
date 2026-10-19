@@ -195,7 +195,7 @@
     });
     r.weak_positions.slice(0, 3).forEach((w) => items.push(
       `Suele jugar <b>${esc(w.usual_san)}</b> en una posición de ${esc(w.opening || "apertura")} que repite ${w.occurrences} veces ` +
-      `(pierde ${fmt(w.avg_wp_loss, 1)} pts de % de victoria; el motor prefiere <b>${esc(w.best_san || "–")}</b>).`));
+      `(pierde ${fmt(w.usual_wp_loss, 1)} pts de % de victoria; el motor prefiere <b>${esc(w.best_san || "–")}</b>).`));
     if (!items.length) return "";
     return `<h3>Ideas para la partida (borrador)</h3><ul>${items.map((i) => `<li>${i}</li>`).join("")}</ul>`;
   }
@@ -239,7 +239,7 @@
     const m = r.matchup ? r.matchup[color] : null;
     const items = r.plan[color];
     const opp = colorName(color === "white" ? "black" : "white");
-    const famRows = m ? m.families.map((f) => `<tr>
+    const famRows = m ? m.families.filter((f) => f.my_games >= 3 && f.rival_games >= 3).map((f) => `<tr>
         <td>${esc(f.opening)} <span class="muted">${esc(f.eco || "")}</span>${f.reinforce ? ' <span class="badge warn">reforzar</span>' : ""}</td>
         <td${ciTitle(f.my_ci)}>${f.my_games} · ${fmt(f.my_score_pct)}% <span class="muted">(${sgn(f.my_over_pct)})</span></td>
         <td${ciTitle(f.rival_ci)}>${f.rival_games} · ${fmt(f.rival_score_pct)}% <span class="muted">(${sgn(f.rival_over_pct)})</span></td>
@@ -259,7 +259,7 @@
           <span>${esc(it.text)}</span>
         </div>`).join("") || '<p class="muted">Sin recomendaciones: faltan partidas en común o evaluaciones.</p>'}</div>
       ${m ? `<h3>Aperturas que juegan los dos</h3>
-      <p class="muted">Entre paréntesis, rendimiento sobre el Elo. "Salida": evaluación media al terminar la apertura
+      <p class="muted">Solo las que jugaron los dos al menos 3 veces. Entre paréntesis, rendimiento sobre el Elo. "Salida": evaluación media al terminar la apertura
         (jugada 10), desde cada uno: es la señal más estable para elegir apertura.</p>
       ${table(["Apertura", "Vos (partidas · %)", `Él con ${opp}`, "Salida vos / él", "Esperado (vs. Elo)", "Confianza"], famRows)}
       <h3>Posiciones favorables</h3>
@@ -328,7 +328,9 @@
       <p class="muted">Se sigue su jugada más frecuente (y la respuesta más común de sus rivales) mientras la probabilidad
         de que llegue sea al menos 25%. Más allá de eso, memorizar rinde poco: se va por otro lado.</p>
       <h3>Líneas para preparar</h3>
-      <div class="weak-list">${items.join("") || '<p class="muted">No hay líneas con ventaja clara y suficiente probabilidad con los datos actuales.</p>'}</div>`;
+      <div class="weak-list">${items.join("") || `<p class="muted">Con ${pr.games} partidas suyas con ${opp} no aparecen
+        líneas que repita al menos 3 veces y donde quedes claramente mejor que lo normal para tu color (o donde él se equivoque).
+        No es un error del análisis: o juega sólido en lo que repite o faltan partidas. Igual sirve conocer su línea principal.</p>`}</div>`;
     bindSeg(root, "prc", (v) => { state.prepColor = v; renderPrep(); });
     $("#prep-main", root).addEventListener("click", () => setLine(ml, { orientation: color, caption: `Línea principal de ${RNAME()}` }));
     $$(".weak", root).forEach((el) => el.addEventListener("click", () => {
@@ -432,7 +434,7 @@
     const weakItems = weak.map((w, i) => `
       <div class="weak" data-i="${i}">
         <div class="head"><span><b>${esc(w.opening || "Posición")}</b> · jugada ${Math.ceil(w.ply / 2)} con ${colorName(w.color)}</span>
-          <span class="badge bad">−${fmt(w.avg_wp_loss, 1)} pts</span></div>
+          <span class="badge bad">−${fmt(w.usual_wp_loss, 1)} pts</span></div>
         <div>Llegás ${w.occurrences} veces · solés jugar <b>${esc(w.usual_san)}</b> · el motor prefiere <b>${esc(w.best_san || "–")}</b></div>
       </div>`);
     const op = cmp.openings;
@@ -622,7 +624,8 @@
     const who = report().me ? state.openingsWho : "rival";
     const sec = section(who);
     const key = state.openingsBy === "family" ? "openings" : "openings_detail";
-    const rowsFor = (c) => sec[key][c].map((o) => `<tr>
+    const showAll = !!state.openingsAll;
+    const rowsFor = (c) => sec[key][c].filter((o) => showAll || o.games >= 3).map((o) => `<tr>
         <td>${esc(o.opening)} <span class="muted">${esc(o.eco || "")}</span></td>
         <td>${o.games}${lowSample(o.games)}</td><td>${wdl(o.wins, o.draws, o.losses)}</td>
         <td class="${pctClass(o.score_pct)}"${ciTitle(o.score_ci)}>${fmt(o.score_pct)}%</td>
@@ -635,6 +638,7 @@
       <div class="toolbar">
         ${report().me ? seg("who", [["rival", RNAME()], ["me", "Yo"]], who) : ""}
         ${seg("by", [["family", "Por familia"], ["detail", "Por variante"]], state.openingsBy)}
+        ${seg("oa", [["min", "Con 3+ partidas"], ["all", "Todas"]], showAll ? "all" : "min")}
       </div>
       <p class="muted">Sobre Elo: puntaje real menos el esperado por los ratings (lo que importa; el puntaje bruto depende de
         contra quién jugó). Pasá el mouse por el puntaje para ver el intervalo. Con pocas partidas, cualquier % engaña.
@@ -644,6 +648,7 @@
       <h3>${esc(whoName(who))} con negras</h3>${table(headers, rowsFor("black"))}`;
     bindSeg(root, "who", (v) => { state.openingsWho = v; renderOpenings(); });
     bindSeg(root, "by", (v) => { state.openingsBy = v; renderOpenings(); });
+    bindSeg(root, "oa", (v) => { state.openingsAll = v === "all"; renderOpenings(); });
   }
 
   // ---------------------------------------------------------------- Explorador
@@ -666,20 +671,40 @@
     const node = nodes[nodes.length - 1];
     const crumbs = [`<button data-depth="0">Inicio</button>`].concat(
       nodes.slice(1).map((n, i) => `<button data-depth="${i + 1}">${esc(n.san)}</button>`));
-    const rows = node.children.map((c) => `<tr class="clickable" data-uci="${esc(c.uci)}">
-        <td><b>${esc(c.san)}</b> <span class="muted">${c.mover === state.tree.color ? "" : "(rival)"}</span></td>
-        <td>${c.count}</td><td>${fmt((100 * c.count) / (node.count || 1))}%</td>
-        <td class="${pctClass(c.score_pct)}">${fmt(c.score_pct)}%</td><td>${fmt(c.avg_cpl)}</td></tr>`);
+    // Cuántas veces llegó el otro (yo si miro al rival, el rival si me miro a mí) a cada posición.
+    const overlap = report().tree_overlap ? report().tree_overlap[who][state.tree.color] : null;
+    const epdOf = (fen) => fen.split(" ").slice(0, 4).join(" ");
+    const other = who === "rival" ? "Vos" : RNAME();
+    const otherColor = colorName(state.tree.color === "white" ? "black" : "white");
+    const isMe = who === "me";
+    const rows = node.children.map((c) => {
+      const own = c.mover === state.tree.color;
+      const met = overlap ? overlap[epdOf(c.fen)] || 0 : null;
+      return `<tr class="clickable" data-uci="${esc(c.uci)}">
+        <td><b>${esc(c.san)}</b></td>
+        <td>${own ? (isMe ? "vos" : "él") : (isMe ? "tu rival" : "su rival")}</td>
+        <td>${c.count}${lowSample(c.count)}</td><td>${fmt((100 * c.count) / (node.count || 1))}%</td>
+        <td class="${pctClass(c.score_pct)}">${fmt(c.score_pct)}%</td><td>${own ? fmt(c.avg_cpl) : "–"}</td>
+        ${overlap ? `<td>${met ? `<b>${met}</b>` : '<span class="muted">0</span>'}</td>` : ""}</tr>`;
+    });
+    const nodeMet = overlap ? overlap[epdOf(node.fen)] || 0 : null;
+    const subject = isMe ? "tus partidas" : `las partidas de ${esc(RNAME())}`;
     root.innerHTML = `
       <div class="toolbar">
         ${report().me ? seg("tw", [["rival", RNAME()], ["me", "Yo"]], who) : ""}
         ${seg("tc", [["white", "Con blancas"], ["black", "Con negras"]], state.tree.color)}
       </div>
-      <p class="muted">Partidas de ${esc(whoName(who))} con ${colorName(state.tree.color)}. Puntaje desde su punto de vista;
-        CPL = pérdida media de la jugada. Hacé clic en una jugada para avanzar.</p>
+      <p class="muted">Es el <b>árbol de repertorio</b> de ${isMe ? "vos" : esc(RNAME())}: todas ${subject} con
+        ${colorName(state.tree.color)}, jugada por jugada. En cada posición ves qué se jugó y cuántas veces: las jugadas de
+        ${isMe ? "vos" : "él"} (sus elecciones) y las de ${isMe ? "tus rivales" : "sus rivales"} (lo que le respondieron).
+        ${overlap ? `La última columna dice cuántas veces <b>llegó ${isMe ? esc(RNAME()) : "vos"}</b> (con ${otherColor}) a la posición
+        que deja esa jugada: así se ve dónde se cruzan los dos repertorios.` : ""}
+        Puntaje desde ${isMe ? "vos" : "él"}; CPL = pérdida media de la jugada (menos es mejor). Clic en una jugada para avanzar.</p>
       <div class="crumbs">${crumbs.join("<span class='muted'>›</span>")}</div>
-      <p>${node.count} partidas llegan a esta posición · puntaje ${fmt(node.score_pct)}%</p>
-      ${table(["Jugada", "Partidas", "Frecuencia", "Puntaje", "CPL"], rows)}`;
+      <p><b>${node.count}</b> de ${subject} llegan a esta posición (puntaje ${fmt(node.score_pct)}%)${overlap ?
+        ` · ${other === "Vos" ? "vos llegaste" : esc(other) + " llegó"} <b>${nodeMet}</b> ${nodeMet === 1 ? "vez" : "veces"}` : ""}.</p>
+      ${table(["Jugada", "De quién", "Partidas", "Frecuencia", "Puntaje", "CPL",
+        ...(overlap ? [other === "Vos" ? "Vos llegaste" : `${esc(other)} llegó`] : [])], rows)}`;
     bindSeg(root, "tw", (v) => { state.tree.who = v; state.tree.path = []; renderTree(); });
     bindSeg(root, "tc", (v) => { state.tree.color = v; state.tree.path = []; renderTree(); });
     $$("[data-depth]", root).forEach((b) => b.addEventListener("click", () => {
@@ -701,7 +726,7 @@
       <div class="weak" data-i="${i}">
         <div class="head">
           <span><b>${esc(w.opening || "Posición")}</b> · jugada ${Math.ceil(w.ply / 2)} de las ${colorName(w.color)}</span>
-          <span class="badge bad">−${fmt(w.avg_wp_loss, 1)} pts % victoria</span>
+          <span class="badge bad" title="Lo que pierde su jugada habitual, en puntos de % de victoria">−${fmt(w.usual_wp_loss, 1)} pts</span>
         </div>
         <div>Llega ${w.occurrences} veces · suele jugar <b>${esc(w.usual_san)}</b> (${w.usual_count}×, CPL ${fmt(w.usual_cpl)})
           · motor: <b>${esc(w.best_san || "–")}</b> · puntaje ${fmt(w.score_pct)}%
