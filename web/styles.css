@@ -223,6 +223,23 @@ td.verdict-peor { color: var(--bad); font-weight: 650; }
   background: var(--surface-3); font-size: 11px; font-weight: 700; }
 .split { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; }
 
+/* Entrenar aperturas. */
+.train-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 14px 16px;
+  margin-top: 12px; }
+.train-card .progress { height: 4px; background: var(--surface-3); border-radius: 2px; overflow: hidden; margin: 8px 0 12px; }
+.train-card .progress > span { display: block; height: 100%; background: var(--accent); transition: width .3s; }
+.train-prompt { font-size: 17px; font-weight: 700; margin: 4px 0; }
+.train-prompt .side { display: inline-block; width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--faint);
+  vertical-align: -2px; margin-right: 6px; }
+.train-prompt .side.white { background: #f0f0f0; } .train-prompt .side.black { background: #15171b; }
+.feedback { border-radius: var(--radius); padding: 10px 14px; margin-top: 10px; border-left: 3px solid; }
+.feedback.right { background: color-mix(in srgb, var(--good) 12%, transparent); border-color: var(--good); }
+.feedback.wrong { background: color-mix(in srgb, var(--bad) 12%, transparent); border-color: var(--bad); }
+.feedback .title { font-weight: 700; font-size: 14px; }
+.train-actions { display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+.kbd { font-size: 10.5px; color: var(--faint); border: 1px solid var(--surface-3); border-radius: 3px; padding: 0 4px; }
+.board-panel.training #board { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 /* Barras de reloj restante (rival vs. yo). */
 .bars { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 14px; display: grid; gap: 8px; }
 .bar-row { display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 10px; align-items: center; }
@@ -358,7 +375,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
   .content { padding: 0; }
   .tab { display: block !important; break-inside: auto; }
   .tab + .tab { break-before: page; }
-  .tab[id="tab-tree"], .tab[id="tab-config"] { display: none !important; }
+  .tab[id="tab-tree"], .tab[id="tab-config"], .tab[id="tab-train"] { display: none !important; }
   .weak, .plan-item, .card, tr, .hint, .expect { break-inside: avoid; }
   .table-wrap { overflow: visible; }
   .tab::before { content: attr(data-title); display: block; font-size: 18px; font-weight: 700; margin: 12px 0 4px; }

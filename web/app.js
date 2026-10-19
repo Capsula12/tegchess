@@ -22,6 +22,7 @@
     loadedAt: 0,          // cuándo se cargaron los informes (para recargar al terminar una tarea)
     status: null,         // /api/status: modo (lichess | pgn), yo, rivales
     me: null,             // mi perfil general (/api/me)
+    train: { cards: {}, queue: [], idx: 0, filter: "all", answered: null, session: { right: 0, wrong: 0 }, loaded: false },
     view: "rival",        // rival | profile
   };
 
@@ -32,9 +33,15 @@
   const colorName = (c) => (c === "white" ? "blancas" : "negras");
 
   // ---------------------------------------------------------------- tablero
+  // Se crea "manipulable" (si no, chessground nunca escucha el mouse), pero sin jugadas permitidas:
+  // solo el entrenamiento habilita mover (enableMove).
   const cg = window.Chessground($("#board"), {
     fen: START_FEN,
-    viewOnly: true,
+    viewOnly: false,
+    movable: { free: false, color: undefined, dests: new Map() },
+    draggable: { enabled: false },
+    selectable: { enabled: false },
+    premovable: { enabled: false },
     coordinates: true,
     animation: { enabled: true, duration: 150 },
     drawable: { enabled: false, visible: true },
@@ -42,6 +49,7 @@
 
   // view: qué se muestra y de quién es cada lado (ver boardView). El tablero mira desde view.bottom.
   function setLine(line, { startFen = START_FEN, idx = null, shapes = null, orientation = null, caption = "", view = null } = {}) {
+    disableMove();
     state.line = line;
     state.lineStart = startFen;
     state.idx = idx === null ? line.length - 1 : idx;
@@ -112,6 +120,20 @@
     $("#eval-text").innerHTML = text;
   }
 
+  // Modo entrenamiento: el tablero acepta jugadas legales del color que me toca.
+  function enableMove(color, destsObj, onMove) {
+    $(".board-panel").classList.add("training");
+    cg.set({
+      turnColor: color, draggable: { enabled: true }, selectable: { enabled: true },
+      movable: { free: false, color, showDests: true, dests: new Map(Object.entries(destsObj)), events: { after: onMove } },
+    });
+  }
+
+  function disableMove() {
+    $(".board-panel").classList.remove("training");
+    cg.set({ draggable: { enabled: false }, selectable: { enabled: false }, movable: { color: undefined, dests: new Map() } });
+  }
+
   function renderBoard() {
     const cur = state.idx >= 0 ? state.line[state.idx] : null;
     const fen = cur ? cur.fen : state.lineStart;
@@ -149,6 +171,7 @@
   $$("[data-nav]").forEach((b) => b.addEventListener("click", () => nav(b.dataset.nav)));
   document.addEventListener("keydown", (e) => {
     if (["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) return;
+    if (e.key === "Enter" && state.view === "train" && state.train.answered) { nextExercise(); return; }
     if (e.key === "ArrowLeft") nav("prev");
     if (e.key === "ArrowRight") nav("next");
     if (e.key === "Home") nav("first");
@@ -558,8 +581,237 @@
     const s = state.me ? state.me.me.profile.summary : null;
     $("#me-entry").innerHTML = `<li data-me class="${state.view === "profile" ? "active" : ""}${state.me ? "" : " no-report"}">
       <div class="r-main"><div class="r-name">${esc(name)}</div>
-        <div class="r-sub">${s ? `Mi perfil · ${fmt(s.last_rating)} · ${s.games} partidas` : "Mi perfil · sin generar"}</div></div></li>`;
-    $("#me-entry li").addEventListener("click", () => showProfile());
+        <div class="r-sub">${s ? `Mi perfil · ${fmt(s.last_rating)} · ${s.games} partidas` : "Mi perfil · sin generar"}</div></div></li>
+      ${state.me ? `<li data-train class="${state.view === "train" ? "active" : ""}">
+        <div class="r-main"><div class="r-name">Entrenar aperturas</div>
+          <div class="r-sub">${trainDueCount()} para hoy · ${allExercises("all").length} posiciones</div></div>
+        ${trainDueCount() ? `<span class="r-exp even">${trainDueCount()}</span>` : ""}</li>` : ""}`;
+    $("#me-entry li[data-me]").addEventListener("click", () => showProfile());
+    const tr = $("#me-entry li[data-train]");
+    if (tr) tr.addEventListener("click", () => showTrain());
+  }
+
+  // ---------------------------------------------------------------- Entrenar aperturas
+  const TRAIN_KEY = "tegchess-training";   // progreso en modo estático (sin servidor)
+  const SESSION_SIZE = 20;
+  const TRAIN_FILTERS = { all: "Todo", principal: "Línea principal", fixes: "Correcciones y desvíos", rival: "Contra el rival" };
+
+  function allExercises(filter) {
+    const mine = (state.me && state.me.training && state.me.training.exercises) || [];
+    const rival = (report() && report().training && report().training.exercises) || [];
+    if (filter === "rival") return rival;
+    if (filter === "principal") return mine.filter((e) => e.kind === "principal" && !e.corrects_usual);
+    if (filter === "fixes") return mine.filter((e) => e.kind === "desvio" || e.corrects_usual);
+    return mine;
+  }
+  const isDue = (ex) => {
+    const c = state.train.cards[ex.id];
+    return !c || new Date(c.due) <= new Date();
+  };
+  const trainDueCount = () => allExercises("all").filter(isDue).length;
+
+  async function loadTrainCards() {
+    if (state.train.loaded) return;
+    if (SERVER) state.train.cards = await api("/api/training").catch(() => ({}));
+    else { try { state.train.cards = JSON.parse(localStorage.getItem(TRAIN_KEY) || "{}"); } catch (_) { state.train.cards = {}; } }
+    state.train.loaded = true;
+  }
+
+  // Misma regla que el servidor (training.review): Leitner con intervalos en días.
+  const INTERVALS = [0, 1, 3, 7, 14, 30, 60];
+  function localReview(card, result) {
+    const c = Object.assign({ box: 0, right: 0, wrong: 0 }, card || {});
+    if (result === "right") { c.box = Math.min(c.box + 1, INTERVALS.length - 1); c.right += 1; }
+    else { c.box = 1; c.wrong += 1; }
+    c.due = new Date(Date.now() + INTERVALS[c.box] * 86400000).toISOString();
+    c.last_result = result;
+    return c;
+  }
+
+  async function recordResult(ex, result) {
+    if (SERVER) {
+      try { state.train.cards[ex.id] = await api("/api/training", { method: "POST", body: JSON.stringify({ id: ex.id, result }) }); return; }
+      catch (_) { /* sin servidor: se guarda en el navegador */ }
+    }
+    state.train.cards[ex.id] = localReview(state.train.cards[ex.id], result);
+    try { localStorage.setItem(TRAIN_KEY, JSON.stringify(state.train.cards)); } catch (_) { /* navegador sin almacenamiento */ }
+  }
+
+  function buildQueue(includeAll = false) {
+    const list = allExercises(state.train.filter);
+    const pool = includeAll ? list.slice() : list.filter(isDue);
+    // Primero lo que fallé la última vez, después lo nuevo y lo que toca repasar (en ese orden de prioridad).
+    const rank = (ex) => { const c = state.train.cards[ex.id]; return c && c.last_result === "wrong" ? 0 : c ? 1 : 2; };
+    pool.sort((a, b) => rank(a) - rank(b) || (b.priority || 0) - (a.priority || 0));
+    state.train.queue = pool.slice(0, SESSION_SIZE);
+    state.train.idx = 0;
+    state.train.answered = null;
+    state.train.session = { right: 0, wrong: 0 };
+  }
+
+  function showTrain() {
+    state.view = "train";
+    state.tab = "train";
+    $$("[data-tab]").forEach((b) => b.classList.remove("active"));
+    $$(".tab").forEach((t) => t.classList.toggle("hidden", t.id !== "tab-train"));
+    $("#tabs").classList.add("hidden");
+    loadTrainCards().then(() => { state.train.queue = []; renderRivalList(); renderTab(); });
+    $(".main").scrollTop = 0;
+  }
+
+  function trainStats() {
+    const list = allExercises(state.train.filter);
+    const cards = state.train.cards;
+    return {
+      total: list.length,
+      due: list.filter(isDue).length,
+      fresh: list.filter((e) => !cards[e.id]).length,
+      learned: list.filter((e) => cards[e.id] && cards[e.id].box >= 4).length,
+    };
+  }
+
+  function renderTrain() {
+    const root = $("#tab-train");
+    const t = state.train;
+    const filters = Object.entries(TRAIN_FILTERS).filter(([k]) => k !== "rival" || allExercises("rival").length);
+    const label = (k) => (k === "rival" && report() ? `Contra ${RNAME()}` : TRAIN_FILTERS[k]);
+    const st = trainStats();
+    const ex = t.queue[t.idx];
+    renderHero();   // los números del encabezado cambian al responder y al cambiar de categoría
+    const head = `
+      <div class="toolbar">${seg("tf", filters.map(([k]) => [k, label(k)]), t.filter)}</div>`;
+    if (!st.total) {
+      root.innerHTML = head + `<p class="muted">No hay ejercicios en esta categoría. Se arman al generar los informes, con las
+        posiciones de tus partidas a las que llegás al menos 3 veces.</p>`;
+      bindTrainFilter(root);
+      return;
+    }
+    if (!ex) {
+      const done = t.session.right + t.session.wrong;
+      root.innerHTML = head + `
+        <div class="train-card">
+          ${done ? `<div class="train-prompt">Sesión terminada: ${t.session.right} de ${done} bien.</div>` : ""}
+          <p class="muted">Cada ejercicio es una posición de tus partidas en la que te toca mover. La respuesta es tu jugada
+            habitual, salvo que pierda según el motor: ahí hay que encontrar la mejor. Lo que acertás vuelve cada vez más
+            espaciado (1, 3, 7, 14, 30 días); lo que fallás vuelve enseguida.</p>
+          <div class="train-actions">
+            ${st.due ? `<button class="primary" id="train-start">Empezar (${Math.min(st.due, SESSION_SIZE)} ejercicios)</button>`
+              : `<span>No te queda nada para hoy en esta categoría.</span>`}
+            <button id="train-all">Repasar igual (aunque no toque)</button>
+          </div>
+        </div>`;
+      bindTrainFilter(root);
+      const start = $("#train-start", root);
+      if (start) start.addEventListener("click", () => { buildQueue(false); renderTrain(); });
+      $("#train-all", root).addEventListener("click", () => { buildQueue(true); renderTrain(); });
+      return;
+    }
+    const ans = t.answered;
+    const side = colorName(ex.color);
+    const where = ex.kind === "rival" ? `${esc(ex.source || "")} contra ${esc(RNAME())}`
+      : `${esc(ex.opening || "")} · llegaste ${ex.occurrences} veces`;
+    const hint = !ans && ex.corrects_usual ? `<p class="muted">Ojo: tu jugada habitual acá no es la mejor.</p>` : "";
+    let feedback = "";
+    if (ans) {
+      const extra = [];
+      if (ex.corrects_usual && ans.uci === ex.usual_uci) {
+        extra.push(`Es tu jugada habitual (${ex.usual_count} veces), pero pierde ${fmt(ex.usual_wp_loss, 1)} puntos de % de victoria.`);
+      } else if (ex.corrects_usual) {
+        extra.push(`${ans.right ? "Antes solías" : "Solés"} jugar <b>${esc(ex.usual_san)}</b> (${ex.usual_count} veces), que pierde
+          ${fmt(ex.usual_wp_loss, 1)} puntos de % de victoria.`);
+      } else if (ex.kind !== "rival" && !ex.corrects_usual) {
+        extra.push(`Es tu jugada habitual: la jugaste ${ex.usual_count} de ${ex.occurrences} veces y el motor la aprueba.`);
+      }
+      if (ex.note && ex.kind === "rival") extra.push(esc(ex.note));
+      if (ex.pv) extra.push(`Cómo sigue: <b>${esc(ex.pv)}</b>`);
+      feedback = `<div class="feedback ${ans.right ? "right" : "wrong"}">
+        <div class="title">${ans.right ? `¡Bien! ${esc(ex.answer_san)}` : ans.uci ? `Era ${esc(ex.answer_san)} — jugaste ${esc(ans.san)}`
+          : `La respuesta era ${esc(ex.answer_san)}`}</div>
+        ${extra.filter(Boolean).map((x) => `<div>${x}</div>`).join("")}</div>`;
+    }
+    root.innerHTML = head + `
+      <div class="train-card">
+        <div class="muted">Ejercicio ${t.idx + 1} de ${t.queue.length} · ${where}</div>
+        <div class="progress"><span style="width:${(100 * t.idx) / t.queue.length}%"></span></div>
+        <div class="train-prompt"><span class="side ${ex.color}"></span>Te toca con ${side}. ¿Qué jugás?</div>
+        ${ex.kind === "rival" && ex.note && !ans ? `<p class="muted">${esc(ex.note)}</p>` : hint}
+        <p class="muted">Mové la pieza en el tablero de la derecha.</p>
+        ${feedback}
+        <div class="train-actions">
+          ${ans ? `<button class="primary" id="train-next">Siguiente <span class="kbd">Enter</span></button>`
+            : `<button id="train-skip">No sé: mostrame</button>`}
+          <button id="train-stop">Terminar</button>
+          <span class="muted">${t.session.right} bien · ${t.session.wrong} mal</span>
+        </div>
+      </div>`;
+    bindTrainFilter(root);
+    if (ans) $("#train-next", root).addEventListener("click", nextExercise);
+    else $("#train-skip", root).addEventListener("click", () => answerExercise(null));
+    $("#train-stop", root).addEventListener("click", () => { t.queue = []; disableMove(); renderTab(); });
+    if (!ans) showExercise(ex);
+  }
+
+  function bindTrainFilter(root) {
+    bindSeg(root, "tf", (v) => { state.train.filter = v; state.train.queue = []; renderTrain(); });
+  }
+
+  function showExercise(ex) {
+    const side = colorName(ex.color);
+    setLine(ex.line, {
+      caption: "Entrenamiento: jugá en el tablero",
+      view: boardView("me", ex.color, "Entrenamiento", "info",
+        `Te toca a vos con <b>${side}</b>${ex.kind === "rival" ? ` contra ${esc(RNAME())}` : ""}: mové la pieza.
+         ${ex.opening ? `<span class="muted">${esc(ex.opening)}</span>` : ""}`,
+        ex.kind === "rival" ? null : "Tus rivales"),
+    });
+    enableMove(ex.color, ex.dests, (orig, dest) => {
+      // Promoción: se asume dama.
+      const uci = orig + dest;
+      const match = [ex.answer_uci, ...(ex.accepted || [])].find((u) => u.slice(0, 4) === uci);
+      answerExercise(match || uci);
+    });
+  }
+
+  async function answerExercise(uci) {
+    const t = state.train;
+    const ex = t.queue[t.idx];
+    if (!ex || t.answered) return;
+    disableMove();
+    const accepted = [ex.answer_uci, ...(ex.accepted || [])];
+    const right = !!uci && accepted.includes(uci);
+    const san = uci ? sanOf(ex.fen, uci, ex.dests) : "nada";
+    t.answered = { uci, right, san };
+    t.session[right ? "right" : "wrong"] += 1;
+    // Volver a la posición y dibujar la respuesta (verde) y lo que jugué (rojo).
+    const shapes = [{ orig: ex.answer_uci.slice(0, 2), dest: ex.answer_uci.slice(2, 4), brush: "green" }];
+    if (uci && !right) shapes.push({ orig: uci.slice(0, 2), dest: uci.slice(2, 4), brush: "red" });
+    cg.set({ fen: ex.fen, lastMove: undefined });
+    cg.setAutoShapes(shapes);
+    // Lo fallado vuelve unas posiciones más adelante en la misma sesión (una vez).
+    if (!right && !ex._retry) t.queue.splice(Math.min(t.idx + 4, t.queue.length), 0, Object.assign({}, ex, { _retry: true }));
+    if (!ex._retry || right) await recordResult(ex, right ? "right" : "wrong");
+    renderMeEntry();
+    renderTrain();
+  }
+
+  // SAN aproximado para mostrar lo que jugué (sin librería de ajedrez en el navegador).
+  function sanOf(fen, uci, destsObj) {
+    const board = fen.split(" ")[0].split("/");
+    const file = uci.charCodeAt(0) - 97, rank = 8 - parseInt(uci[1], 10);
+    let col = 0, piece = "";
+    for (const ch of board[rank]) {
+      if (/\d/.test(ch)) col += +ch; else { if (col === file) piece = ch; col += 1; }
+    }
+    const name = piece.toUpperCase() === "P" ? "" : piece.toUpperCase();
+    return `${name}${uci.slice(2, 4)}`;
+  }
+
+  function nextExercise() {
+    const t = state.train;
+    t.idx += 1;
+    t.answered = null;
+    if (t.idx >= t.queue.length) { t.queue = []; disableMove(); }
+    renderTrain();
   }
 
   function showProfile() {
@@ -1047,6 +1299,14 @@
   }
 
   function renderHero() {
+    if (state.view === "train") {
+      const st = trainStats();
+      setHero({ eyebrow: "Entrenamiento", title: "Entrenar aperturas",
+        sub: "Posiciones de tus partidas, con repetición espaciada: lo que acertás vuelve cada vez más espaciado.",
+        stats: [{ label: "Para hoy", value: st.due, cls: st.due ? "even" : "good" }, { label: "Nuevas", value: st.fresh },
+          { label: "Aprendidas", value: st.learned }, { label: "Posiciones", value: st.total }] });
+      return;
+    }
     if (state.view === "profile") {
       const pr = state.me;
       const name = pr ? (pr.meta.me_name || pr.meta.me) : "Mi perfil";
@@ -1128,7 +1388,7 @@
       const r = state.reports[e.key];
       const s = r ? r.rival.profile.summary : null;
       const exp = r && r.base ? r.base.expected_pct : null;
-      return `<li data-rival="${esc(e.key)}" class="${e.key === state.rival && state.tab !== "config" && state.view !== "profile" ? "active" : ""}${r ? "" : " no-report"}">
+      return `<li data-rival="${esc(e.key)}" class="${e.key === state.rival && state.tab !== "config" && !["profile", "train"].includes(state.view) ? "active" : ""}${r ? "" : " no-report"}">
         <div class="r-main"><div class="r-name">${esc(e.name)}</div>
           <div class="r-sub">${s ? `${fmt(s.last_rating)} · ${s.games} partidas` : "sin informe todavía"}</div></div>
         ${exp !== null ? `<span class="r-exp ${expClass(exp)}" title="Tu expectativa por Elo contra este rival">${fmt(exp)}%</span>` : ""}
@@ -1142,7 +1402,8 @@
     $$("#rival-list li[data-rival]").forEach((li) => li.addEventListener("click", () => {
       state.rival = li.dataset.rival;
       state.tree.path = [];
-      if (state.tab === "config" || state.view === "profile") { state.view = "rival"; showTab("summary"); }
+      if (state.view === "train" && state.train.filter === "rival") { state.train.queue = []; renderRivalList(); renderTab(); }
+      else if (state.tab === "config" || state.view === "profile" || state.view === "train") { state.view = "rival"; showTab("summary"); }
       else { renderRivalList(); renderTab(); }
       $(".main").scrollTop = 0;
     }));
@@ -1161,6 +1422,12 @@
 
   function renderTab() {
     renderMeEntry();
+    if (state.view === "train") {
+      renderHero();
+      $("#empty").classList.add("hidden");
+      $("#print-btn").classList.add("hidden");
+      return renderTrain();
+    }
     if (state.view === "profile") {
       renderHero();
       $("#empty").classList.add("hidden");
@@ -1268,7 +1535,7 @@
         state.status = await api("/api/status");
         applySource();
       }
-      if (!only) state.me = await api("/api/me").catch(() => null);
+      if (!only) { state.me = await api("/api/me").catch(() => null); state.train.loaded = false; await loadTrainCards(); }
       rivals = only ? [only] : (await api("/api/reports")).map((r) => r.rival);
       const loaded = {};
       await Promise.all(rivals.map(async (r) => { loaded[r] = await api("/api/reports/" + encodeURIComponent(r)); }));
