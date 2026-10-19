@@ -12,7 +12,7 @@ from tegchess.config import Config, lichess_token, normalize_player
 from tegchess.engine import evaluate_pending
 from tegchess.ingest import sync_user
 from tegchess.lichess import LichessClient, LichessError
-from tegchess.report import build_report, export_static, write_report
+from tegchess.report import build_me_report, build_report, export_static, write_report
 
 log = logging.getLogger(__name__)
 
@@ -68,13 +68,16 @@ def analyze(cfg: Config, progress: Progress = _noop_progress) -> dict[str, int]:
 def build_reports(cfg: Config, rivals: list[str] | None = None, progress: Progress = _noop_progress) -> list[Path]:
     cfg = cfg.active()
     rivals = [normalize_player(r) for r in (rivals or cfg.opponents)]
-    tick = progress("Generando informes", len(rivals))
+    tick = progress("Generando informes", len(rivals) + (1 if cfg.me else 0))
     paths = []
     cache: dict = {}   # mi sección es la misma en todos los informes
     con = db.connect(cfg.db_path)
     try:
         for rival in rivals:
             paths.append(write_report(build_report(con, cfg, rival, cache), cfg.reports_path))
+            tick()
+        if cfg.me:
+            paths.append(write_report(build_me_report(con, cfg, cache), cfg.reports_path))
             tick()
     finally:
         con.close()

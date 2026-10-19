@@ -19,6 +19,7 @@ from tegchess.analysis.crossover import (
     select_battles,
 )
 from tegchess.analysis.clock import time_profile
+from tegchess.analysis.comparison import profile_comparison
 from tegchess.analysis.expectation import matchup_base, strength
 from tegchess.analysis.improvement import improvement_section
 from tegchess.analysis.lines import line_to, san
@@ -252,11 +253,33 @@ def build_plan(matchup: dict[str, Any] | None, traps: list[dict[str, Any]], time
     return plan
 
 
+ME_KEY = "_me"   # archivo del perfil propio (los ids de jugador nunca empiezan con "_")
+
+
 def me_section(con: duckdb.DuckDBPyConnection, cfg: Config, me: str) -> dict[str, Any]:
     """Mi sección (igual para todos los informes): se calcula una vez por corrida."""
-    sec = player_section(con, cfg, me)
-    sec["improvement"] = improvement_section(con, cfg, me, sec["profile"]["time"])
-    return sec
+    return player_section(con, cfg, me)
+
+
+def build_me_report(con: duckdb.DuckDBPyConnection, cfg: Config, cache: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Mi perfil general: mis datos, qué mejorar y la comparación con todos mis rivales."""
+    me = normalize_player(cfg.me)
+    cache = cache if cache is not None else {}
+    if "me" not in cache:
+        cache["me"] = me_section(con, cfg, me)
+    sec = cache["me"]
+    return {
+        "meta": {
+            "version": __version__,
+            "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "me": me, "me_name": cfg.me, "key": ME_KEY, "source": cfg.source,
+            "rivals": [cfg.display_name(normalize_player(o)) for o in cfg.opponents],
+            "analysed_plies": cfg.engine.max_ply,
+        },
+        "me": sec,
+        "improvement": improvement_section(con, cfg, me, sec["profile"]["time"]),
+        "comparison": profile_comparison(con, cfg),
+    }
 
 
 def build_report(con: duckdb.DuckDBPyConnection, cfg: Config, rival: str,
@@ -316,7 +339,8 @@ def _json_default(o: Any) -> Any:
 
 def write_report(report: dict[str, Any], reports_dir: Path) -> Path:
     reports_dir.mkdir(parents=True, exist_ok=True)
-    path = reports_dir / f"{report_key(report['meta']['rival'])}.json"
+    key = report["meta"].get("key") or report_key(report["meta"]["rival"])
+    path = reports_dir / f"{key}.json"
     path.write_text(json.dumps(report, ensure_ascii=False, default=_json_default), encoding="utf-8")
     return path
 
@@ -326,7 +350,7 @@ def export_static(reports: list[dict[str, Any]], out_dir: Path) -> Path:
     if out_dir.exists():
         shutil.rmtree(out_dir)
     shutil.copytree(WEB_DIR, out_dir)
-    payload = {report_key(r["meta"]["rival"]): r for r in reports}
+    payload = {r["meta"].get("key") or report_key(r["meta"]["rival"]): r for r in reports}
     data_js = "window.TEGCHESS_STATIC = " + json.dumps(payload, ensure_ascii=False, default=_json_default) + ";\n"
     (out_dir / "static-data.js").write_text(data_js, encoding="utf-8")
     return out_dir / "index.html"

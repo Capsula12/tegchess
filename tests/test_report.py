@@ -20,6 +20,11 @@ def _cfg(tmp_path):
 def test_build_report_structure(con, tmp_path, raw_games):
     store_games(con, [parse_game(r) for r in raw_games])
     cfg = _cfg(tmp_path)
+    from tegchess.report import build_me_report
+
+    me = build_me_report(con, cfg)
+    assert me["meta"]["key"] == "_me" and me["comparison"]["metrics"] and me["improvement"]["areas"]
+    assert write_report(me, cfg.reports_path).name == "_me.json"
     rep = build_report(con, cfg, "Lucky09")
     assert rep["meta"]["rival"] == "lucky09"
     assert rep["rival"]["profile"]["summary"]["games"] == 1
@@ -48,6 +53,8 @@ def test_server_endpoints(con, tmp_path, raw_games, monkeypatch):
     assert client.get("/api/reports").json()[0]["rival"] == "lucky09"
     assert client.get("/api/reports/lucky09").json()["meta"]["rival"] == "lucky09"
     assert client.get("/api/reports/..%2Fconfig").status_code == 404
+    assert client.get("/api/reports").headers["cache-control"] == "no-store"
+    assert client.get("/api/me").status_code == 404   # todavía no se generó el perfil propio
     assert client.get("/api/config").json()["me"] == "german11"
     new = client.get("/api/config").json()
     new["opponents"] = ["a", "b"]

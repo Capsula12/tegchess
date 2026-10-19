@@ -11,6 +11,7 @@ from collections.abc import Callable
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
+from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
@@ -82,8 +83,18 @@ class JobRunner:
             self._lock.release()
 
 
+class NoCache(BaseHTTPMiddleware):
+    """Sin caché: los informes y la interfaz cambian al regenerar (si no, el navegador muestra lo viejo)."""
+
+    async def dispatch(self, request, call_next):  # type: ignore[no-untyped-def]
+        response = await call_next(request)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="tegchess", docs_url="/api/docs")
+    app.add_middleware(NoCache)
     jobs = JobRunner()
 
     @app.get("/api/status")
@@ -120,9 +131,18 @@ def create_app() -> FastAPI:
         cfg = load_config()
         out = []
         for p in sorted(cfg.reports_path.glob("*.json")):
+            if p.stem.startswith("_"):   # perfil propio (/api/me)
+                continue
             meta = json.loads(p.read_text(encoding="utf-8")).get("meta", {})
             out.append({"rival": p.stem, "name": meta.get("rival_name"), "generated_at": meta.get("generated_at")})
         return out
+
+    @app.get("/api/me")
+    def me_report() -> FileResponse:
+        path = load_config().active().reports_path / "_me.json"
+        if not path.exists():
+            raise HTTPException(404, "Todavía no hay perfil propio: generá los informes")
+        return FileResponse(path, media_type="application/json")
 
     @app.get("/api/players")
     def players(q: str = "", limit: int = 30) -> list[dict[str, Any]]:

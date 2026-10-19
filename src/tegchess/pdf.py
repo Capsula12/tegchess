@@ -71,7 +71,11 @@ def export_pdfs(cfg: Config, rivals: list[str], base_url: str,
                 tick()
                 continue
             meta = json.loads(report_file.read_text(encoding="utf-8")).get("meta", {})
-            target = out_dir / _pdf_name(meta.get("rival_name") or rival)
+            if rival == "_me":
+                name = meta.get("me_name") or "yo"
+                target = out_dir / ("perfil-" + _pdf_name(name).removeprefix("informe-"))
+            else:
+                target = out_dir / _pdf_name(meta.get("rival_name") or rival)
             tmp = target.with_name(target.stem + ".tmp.pdf")
             tmp.unlink(missing_ok=True)
             profile = Path(profiles) / rival
