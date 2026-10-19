@@ -19,6 +19,8 @@
     por color, por modalidad y forma reciente. Los "esperados" de aperturas y posiciones parten de esa base y suman
     la ventaja según el motor (peso 0,6) y el rendimiento sobre el Elo en la posición, suavizado con 30 partidas.
     Intervalos de 90% y chips de confianza / poca muestra. Metodología y backtest: `docs/PROPUESTA_ANALISIS.md`.
+  - **Explorador**: árbol de repertorio de cada uno con, en cada posición, cuántas veces llegó el otro (con el color
+    contrario): muestra dónde se cruzan los repertorios.
   - **Preparación**: su línea más jugada (hasta donde la probabilidad de que la siga es ≥ 25%), qué tan predecible
     es y líneas para memorizar ordenadas por probabilidad de llegar × ventaja (`analysis/prep.py`).
   - **Trampas** ordenadas por valor esperado: P(llega) × P(se equivoca) × ganancia × facilidad.
@@ -90,6 +92,13 @@ Preguntas del enunciado original y cobertura:
 - Puntaje esperado del cruce: `0.4·mío + 0.4·(1 − suyo) + 0.2·motor`, cada puntaje suavizado con 4 tablas ficticias.
 - Trampa = jugada habitual del rival con pérdida ≥ 8 puntos de % de victoria en una posición que repite ≥ 3 veces.
   "Precisa" si la 2ª mejor respuesta gana ≥ 10 puntos menos que la mejor.
+- **Mínimos de muestra** (`analysis/expectation.py`): 3 partidas para una posición o jugada, 5 para una familia de
+  aperturas, 20 para rasgos generales (reloj, rendimiento). Una jugada se marca "a corregir" solo si se repitió ≥ 3
+  veces, pierde ≥ 5 puntos de % de victoria (imprecisión de Lichess) y el motor prefiere otra (`worth_correcting`).
+- **Preparación**: la ventaja se mide contra lo normal para mi color (la evaluación de la posición inicial), no contra
+  0,00; si no, con negras nunca aparecía nada.
+- **Sin IA**: todo el análisis es determinístico (python-chess, DuckDB, Stockfish). El token de Lichess solo se usa
+  para descargar partidas (y a futuro para el opening explorer). Si alguna vez se suma IA, que sea opcional y aparte.
 - PDF con la impresión del navegador (sin WeasyPrint, que en Windows necesita GTK): Edge headless desde el servidor.
   `msedge.exe` delega y vuelve enseguida, por eso `pdf.py` espera a que el archivo deje de crecer.
 - Sin build de front: JS vanilla y chessground vendorizado (GPL-3.0; tenerlo en cuenta si el repo se publica con otra licencia).
