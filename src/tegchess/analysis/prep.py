@@ -8,8 +8,10 @@ Se recorre el árbol de sus partidas con el color que va a jugar:
 - En sus jugadas, cada rama pesa lo que él la elige (probabilidad acumulada = qué tan seguido llega).
 - En las jugadas del otro lado elegimos nosotros: se siguen las que sus rivales jugaron contra él,
   así hay datos de cómo responde.
-Un "objetivo" es una posición tras su jugada en la que quedo mejor según el motor. Su valor es
-probabilidad de llegar × ventaja (en puntos de %, con el mismo peso del motor que la expectativa).
+Un "objetivo" es una posición tras su jugada en la que quedo mejor de lo normal para mi color según el motor
+(la referencia es la posición inicial: con negras, igualar ya es ganar terreno), o en la que su jugada habitual
+empeora claramente su posición. Su valor es probabilidad de llegar × ventaja (en puntos de %, con el mismo peso
+del motor que la expectativa).
 """
 
 from __future__ import annotations
@@ -27,10 +29,13 @@ from tegchess.metrics import eval_cp, win_pct
 
 MAX_PLY = 20            # hasta dónde se prepara (10 jugadas)
 MIN_GAMES = 3           # partidas suyas en la posición para seguir la rama
+MIN_MOVE_GAMES = 3      # veces que tiene que haber jugado (o enfrentado) una jugada para seguirla
 MIN_SHARE = 0.15        # elección suya mínima para seguir una rama
 MIN_REACH = 0.08        # probabilidad acumulada mínima
 MY_BRANCHES = 4         # respuestas nuestras que se exploran en cada posición
-MIN_GAIN = 4.0          # ganancia mínima (puntos de %) para considerar un objetivo (~ +70 cp)
+MIN_GAIN = 3.0          # ventaja mínima sobre lo normal para mi color (puntos de %, ~ +50 cp)
+MIN_SWING = 4.0         # o su jugada empeora su posición al menos esto (puntos de %)
+START_EVAL_CP = 25      # evaluación típica de la posición inicial (si no está en la base)
 MAIN_LINE_REACH = 0.25  # la "línea principal" se sigue mientras la probabilidad sea al menos esta
 SHARE_PRIOR = 2         # partidas ficticias "en otra jugada": 3 de 3 no es 100% sino 60%
 
@@ -101,6 +106,10 @@ def prep_section(con: duckdb.DuckDBPyConnection, cfg: Config, rival: str, my_col
         e = evals.get(epd, (None, None))[0]
         return None if e is None else sign * e
 
+    # Lo normal para mi color: la evaluación de la posición inicial vista desde mí.
+    start = eval_me(chess.Board().epd())
+    baseline = win_pct(start if start is not None else sign * START_EVAL_CP)
+
     targets: list[dict[str, Any]] = []
 
     def walk(board: chess.Board, line: list[dict[str, Any]], prob: float) -> None:
@@ -115,7 +124,7 @@ def prep_section(con: duckdb.DuckDBPyConnection, cfg: Config, rival: str, my_col
             e_before = eval_me(epd)
             for m in options:
                 share = m["n"] / moved
-                if share < MIN_SHARE or m["n"] < 2:
+                if share < MIN_SHARE or m["n"] < MIN_MOVE_GAMES:
                     continue
                 move = chess.Move.from_uci(m["uci"])
                 if move not in board.legal_moves:
@@ -127,10 +136,11 @@ def prep_section(con: duckdb.DuckDBPyConnection, cfg: Config, rival: str, my_col
                 step["fen"] = board.fen()
                 new_line = [*line, step]
                 if e_after is not None:
-                    gain = ENGINE_WEIGHT * (win_pct(e_after) - 50)
+                    gain = ENGINE_WEIGHT * (win_pct(e_after) - baseline)
                     # Su error en esta jugada (cuánto empeora la posición para él).
                     swing = None if e_before is None else ENGINE_WEIGHT * (win_pct(e_after) - win_pct(e_before))
-                    if gain >= MIN_GAIN and child_prob >= MIN_REACH:
+                    good = gain >= MIN_GAIN or (gain > 0 and swing is not None and swing >= MIN_SWING)
+                    if good and child_prob >= MIN_REACH:
                         my_steps = [s for s in new_line if s.get("mine") is not None]
                         targets.append({
                             "epd": m["epd_after"],
@@ -152,7 +162,7 @@ def prep_section(con: duckdb.DuckDBPyConnection, cfg: Config, rival: str, my_col
             # Las más jugadas contra él y, además, las de mi repertorio (si él tiene partidas ahí).
             branches = options[:MY_BRANCHES] + [m for m in options[MY_BRANCHES:] if mine.get((epd, m["uci"]), 0) >= 2]
             for m in branches:
-                if m["n"] < 2:
+                if m["n"] < MIN_MOVE_GAMES:
                     continue
                 move = chess.Move.from_uci(m["uci"])
                 if move not in board.legal_moves:
@@ -184,7 +194,7 @@ def prep_section(con: duckdb.DuckDBPyConnection, cfg: Config, rival: str, my_col
             break
     for t in chosen:
         t["in_my_repertoire"] = t["my_moves"] > 0 and t["known_moves"] == t["my_moves"]
-        t["kind"] = "trampa" if (t["rival_mistake_pct"] or 0) >= 5 else "ventaja"
+        t["kind"] = "trampa" if (t["rival_mistake_pct"] or 0) >= MIN_SWING else "ventaja"
         t["memorize_plies"] = len(t["line"])
 
     return {"games": total, "targets": chosen, **_main_line(reach, his, theirs, riv_color)}
