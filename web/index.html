@@ -19,7 +19,7 @@
         <ul id="me-entry" class="rival-list"></ul>
       </div>
 
-      <div class="side-block">
+      <div class="side-block rivals">
         <div class="side-title">Rivales <span id="source-chip" class="source-chip server-only"></span></div>
         <div class="rival-search server-only">
           <input id="rival-search" type="search" placeholder="Buscar y agregar rival…" autocomplete="off">
@@ -32,9 +32,9 @@
         <div class="side-title">Datos</div>
         <div class="side-actions">
           <button data-job="fetch" id="fetch-btn" title="Descargar partidas nuevas de Lichess">⤓ Descargar</button>
-          <button data-job="analyze" title="Evaluar posiciones con Stockfish">⚙ Analizar</button>
+          <button data-job="analyze" title="Evaluar posiciones con Stockfish">◎ Analizar</button>
           <button data-job="report" title="Generar informes y HTML estático">▤ Generar informes</button>
-          <button data-job="all" class="primary" title="Descargar, analizar y generar">▶ Todo</button>
+          <button data-job="all" class="primary" title="Descargar, analizar y generar los informes">▶ Actualizar todo</button>
         </div>
       </div>
 
@@ -45,15 +45,15 @@
 
     <main class="main">
       <header class="hero" id="hero">
-        <div class="avatar" id="hero-avatar">♞</div>
         <div class="hero-text">
-          <div class="eyebrow" id="hero-eyebrow">Informe de rival</div>
+          <div class="eyebrow" id="hero-eyebrow">Preparación de rivales</div>
           <h1 id="hero-title">tegchess</h1>
-          <div class="hero-meta" id="hero-meta"></div>
+          <div class="hero-sub" id="hero-sub"></div>
         </div>
         <div class="hero-actions">
-          <button id="print-btn" class="pill primary" title="Guardar informes en PDF">PDF</button>
+          <button id="print-btn" class="pill" title="Guardar en PDF">⤓ PDF</button>
         </div>
+        <div class="stats" id="hero-stats"></div>
       </header>
 
       <nav class="tabs" id="tabs">

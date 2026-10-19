@@ -201,14 +201,12 @@
       `<td class="${pctClass(x.score_pct)}">${fmt(x.score_pct)}%</td></tr>`);
     const endings = p.endings.map((x) => `<tr><td>${esc(endingName(x.status))}</td><td>${x.wins}</td><td>${x.draws}</td><td>${x.losses}</td></tr>`);
     $("#tab-summary").innerHTML = `
+      ${strengthHtml(r)}
       <div class="cards">
-        ${card("Partidas", s.games)}
         ${card("Puntaje", fmt(s.score_pct) + "%")}
-        ${card("Rating actual", fmt(s.last_rating))}
         ${card("Jugadas por partida", fmt(s.avg_moves))}
         ${card("Precisión media", s.avg_accuracy ? fmt(s.avg_accuracy) + "%" : "–")}
       </div>
-      ${strengthHtml(r)}
       <h3>Resultados por color</h3>
       ${table(["", "Partidas", "G / T / P", "Puntaje"], color)}
       <h3>Por modalidad</h3>
@@ -559,9 +557,8 @@
     if (!name) return;
     const s = state.me ? state.me.me.profile.summary : null;
     $("#me-entry").innerHTML = `<li data-me class="${state.view === "profile" ? "active" : ""}${state.me ? "" : " no-report"}">
-      <span class="r-avatar me">${esc(name.slice(0, 1).toUpperCase())}</span>
-      <span style="min-width:0"><div class="r-name">${esc(name)}</div>
-        <div class="r-sub">${s ? `Mi perfil · ${s.games} partidas · ${fmt(s.last_rating)}` : "Mi perfil · sin generar"}</div></span></li>`;
+      <div class="r-main"><div class="r-name">${esc(name)}</div>
+        <div class="r-sub">${s ? `Mi perfil · ${fmt(s.last_rating)} · ${s.games} partidas` : "Mi perfil · sin generar"}</div></div></li>`;
     $("#me-entry li").addEventListener("click", () => showProfile());
   }
 
@@ -1038,61 +1035,71 @@
   });
 
   // ---------------------------------------------------------------- navegación
-  function hueOf(name) {
-    let h = 0;
-    for (const ch of String(name)) h = (h * 31 + ch.charCodeAt(0)) % 360;
-    return h;
+  // Color de la expectativa: verde si te favorece, rojo si no, dorado si es pareja.
+  const expClass = (p) => (p === null || p === undefined ? "" : p >= 55 ? "good" : p <= 40 ? "bad" : "even");
+
+  function setHero({ eyebrow, title, sub = "", stats = [] }) {
+    $("#hero-eyebrow").textContent = eyebrow;
+    $("#hero-title").textContent = title;
+    $("#hero-sub").innerHTML = sub;
+    $("#hero-stats").innerHTML = stats.filter(Boolean).map((st) => `<div class="stat ${st.cls || ""}"${st.title ? ` title="${esc(st.title)}"` : ""}>
+      <div class="label">${esc(st.label)}</div><div class="value">${st.value}</div></div>`).join("");
   }
-  const rivalColor = (name, l = 38) => `hsl(${hueOf(name)}, 45%, ${l}%)`;
 
   function renderHero() {
-    const hero = $("#hero");
     if (state.view === "profile") {
       const pr = state.me;
       const name = pr ? (pr.meta.me_name || pr.meta.me) : "Mi perfil";
       const s = pr ? pr.me.profile.summary : null;
-      hero.style.setProperty("--hero", "#1f6f43");
-      $("#hero-avatar").textContent = name.slice(0, 1).toUpperCase();
-      $("#hero-eyebrow").textContent = "Mi perfil";
-      $("#hero-title").textContent = name;
-      $("#hero-meta").innerHTML = s ? `<b>${s.games} partidas</b> · rating ${fmt(s.last_rating)} · comparado con
-        ${pr.comparison.players.length} rivales · generado ${esc(new Date(pr.meta.generated_at).toLocaleString())}` : "";
+      const mine = pr ? pr.comparison.me : null;
+      setHero({
+        eyebrow: "Mi perfil", title: name,
+        sub: pr ? `Comparado con ${pr.comparison.players.length} rivales · generado ${esc(new Date(pr.meta.generated_at).toLocaleString())}` : "",
+        stats: s ? [
+          { label: "Rating", value: fmt(s.last_rating) },
+          { label: "Partidas", value: s.games },
+          mine && { label: "Sobre tu Elo", value: sgn(mine.over_pct, 1), cls: mine.over_pct >= 2 ? "good" : mine.over_pct <= -2 ? "bad" : "",
+            title: "Puntaje real menos el esperado por los ratings" },
+          { label: "Puntaje", value: fmt(s.score_pct) + "%" },
+        ] : [],
+      });
       document.title = `${name} · tegchess`;
       return;
     }
     if (state.tab === "config") {
-      hero.style.setProperty("--hero", "#3a3a3a");
-      $("#hero-avatar").textContent = "⚙";
-      $("#hero-eyebrow").textContent = "tegchess";
-      $("#hero-title").textContent = "Configuración";
-      $("#hero-meta").textContent = "Usuarios, modalidades y motor. Los cambios se usan en la próxima descarga o análisis.";
+      setHero({ eyebrow: "tegchess", title: "Configuración",
+        sub: "Usuarios, origen de las partidas y motor. Los cambios se usan en la próxima descarga o análisis." });
       return;
     }
     const r = report();
     if (!r) {
-      hero.style.setProperty("--hero", "#2d5a43");
-      $("#hero-avatar").textContent = "♞";
-      $("#hero-eyebrow").textContent = "Preparación de rivales";
-      $("#hero-title").textContent = "tegchess";
-      $("#hero-meta").textContent = "";
+      setHero({ eyebrow: "Preparación de rivales", title: "tegchess" });
       return;
     }
     const m = r.meta;
     const s = r.rival.profile.summary;
+    const st = r.rival.profile.strength;
     const name = m.rival_name || m.rival;
-    hero.style.setProperty("--hero", rivalColor(m.rival));
-    $("#hero-avatar").textContent = name.slice(0, 1).toUpperCase();
-    $("#hero-eyebrow").textContent = m.me ? `Informe de rival · preparado para ${m.me_name || m.me}` : "Informe de rival";
-    $("#hero-title").textContent = name;
     const b = r.base;
-    $("#hero-meta").innerHTML = (b ? `<span class="hero-expect">Por Elo esperás <b>${fmt(b.expected_pct)}%</b> · vos ${b.my_rating} vs. ${b.rival_rating} en ${esc(b.perf)}</span><br>` : "") +
-      `<b>${s.games} partidas</b> · rating ${fmt(s.last_rating)} · ` + (m.source === "pgn"
-        ? "todas las partidas de los archivos PGN<br>"
-        : `${esc(m.perf_types.join(", "))} · desde ${esc(m.since || "el inicio")}${m.until ? " hasta " + esc(m.until) : ""}
-      · máx. ${m.max_games || "∞"} partidas<br>`) +
-      `
-      Stockfish prof. ${m.engine_depth}, primeros ${m.analysed_plies || "todos los"} plies · posiciones evaluadas ${fmt(m.eval_coverage_pct)}%
-      · generado ${esc(new Date(m.generated_at).toLocaleString())}`;
+    const form = st && st.form && st.form.recent;
+    const scope = m.source === "pgn" ? "todas las partidas de los archivos PGN"
+      : `${esc(m.perf_types.join(", "))} · desde ${esc(m.since || "el inicio")}${m.until ? " hasta " + esc(m.until) : ""} · máx. ${m.max_games || "∞"} partidas`;
+    setHero({
+      eyebrow: m.me ? `Rival · preparado para ${m.me_name || m.me}` : "Rival",
+      title: name,
+      sub: `${scope} · Stockfish prof. ${m.engine_depth} (${m.analysed_plies || "todos los"} plies, ${fmt(m.eval_coverage_pct)}% evaluado)
+        · generado ${esc(new Date(m.generated_at).toLocaleString())}`,
+      stats: [
+        b && { label: "Por Elo esperás", value: `${fmt(b.expected_pct)}%`, cls: expClass(b.expected_pct),
+          title: `Vos ${b.my_rating} contra ${b.rival_rating} en ${b.perf}` },
+        { label: "Rating", value: `${fmt(s.last_rating)}${b ? `<small>vos ${b.my_rating}</small>` : ""}` },
+        { label: "Partidas", value: s.games },
+        st && st.overall && { label: "Sobre su Elo", value: sgn(st.overall.over_pct, 1),
+          cls: st.overall.over_pct >= 2 ? "bad" : st.overall.over_pct <= -2 ? "good" : "",
+          title: "Si rinde más (positivo) o menos que su rating" },
+        form && { label: "Últimas 30", value: sgn(form.over_pct, 1), title: "Rendimiento sobre el Elo en sus últimas 30 partidas" },
+      ],
+    });
     document.title = `${name} · tegchess`;
   }
 
@@ -1120,10 +1127,11 @@
     $("#rival-list").innerHTML = entries.map((e) => {
       const r = state.reports[e.key];
       const s = r ? r.rival.profile.summary : null;
+      const exp = r && r.base ? r.base.expected_pct : null;
       return `<li data-rival="${esc(e.key)}" class="${e.key === state.rival && state.tab !== "config" && state.view !== "profile" ? "active" : ""}${r ? "" : " no-report"}">
-        <span class="r-avatar" style="--c:${rivalColor(e.key)}">${esc(e.name.slice(0, 1).toUpperCase())}</span>
-        <span style="min-width:0"><div class="r-name">${esc(e.name)}</div>
-          <div class="r-sub">${s ? `${s.games} partidas · ${fmt(s.last_rating)}` : "sin informe todavía"}</div></span>
+        <div class="r-main"><div class="r-name">${esc(e.name)}</div>
+          <div class="r-sub">${s ? `${fmt(s.last_rating)} · ${s.games} partidas` : "sin informe todavía"}</div></div>
+        ${exp !== null ? `<span class="r-exp ${expClass(exp)}" title="Tu expectativa por Elo contra este rival">${fmt(exp)}%</span>` : ""}
         ${e.removable && SERVER ? `<button class="remove" title="Quitar de mis rivales" data-remove="${esc(e.removable)}">✕</button>` : ""}</li>`;
     }).join("") || `<li class="muted" style="cursor:default">${state.status && state.status.source === "pgn"
       ? "Buscá rivales arriba para agregarlos" : "Sin informes todavía"}</li>`;
@@ -1211,13 +1219,12 @@
       html = res.map((p) => {
         const added = chosen.has(p.id.replace(/[^\p{L}\p{N}_-]+/gu, "_").replace(/^_+|_+$/g, ""));
         return `<div class="res${added ? " added" : ""}" data-add="${esc(p.name)}">
-          <span class="r-avatar" style="--c:${rivalColor(p.id)};width:32px;height:32px;font-size:13px">${esc(p.name.slice(0, 1))}</span>
-          <span class="r-name"><div>${esc(p.name)}</div><div class="r-sub">${p.games} partidas · Elo ${fmt(p.rating)} · ${esc(p.last || "")}</div></span>
+          <div class="r-main"><div class="r-name">${esc(p.name)}</div><div class="r-sub">${p.games} partidas · Elo ${fmt(p.rating)} · ${esc(p.last || "")}</div></div>
           <span class="add">${added ? "✓" : "+"}</span></div>`;
       }).join("") || (st_indexed() ? '<div class="muted" style="padding:8px">Sin coincidencias</div>'
         : '<div class="muted" style="padding:8px">Todavía no importaste PGN: tocá <b>Importar PGN</b>.</div>');
     } else {
-      html = `<div class="res" data-add="${esc(q)}"><span class="r-name">Agregar el usuario de Lichess <b>${esc(q)}</b></span><span class="add">+</span></div>`;
+      html = `<div class="res" data-add="${esc(q)}"><div class="r-main">Agregar el usuario de Lichess <b>${esc(q)}</b></div><span class="add">+</span></div>`;
     }
     box.innerHTML = html;
     box.classList.remove("hidden");

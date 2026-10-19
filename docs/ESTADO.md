@@ -33,8 +33,10 @@
 - **Tablero**: cada cosa que se abre dice qué es ("Tu preparación", "Línea del rival", "Trampa para vos"...), mira
   desde el lado de quien juega esa línea (vos o el rival), con los nombres y colores arriba y abajo, y muestra la
   barra de evaluación de Stockfish con las evaluaciones ya guardadas (no corre un motor en el navegador).
-- Interfaz local (`run.bat`), oscura estilo reproductor de música: rivales en la barra lateral, Descargar / Analizar /
-  Generar informes / Todo, progreso en una barra inferior.
+- Interfaz local (`run.bat`): oscura, pizarra con acento dorado, pensada para entrar entera al 100% de zoom.
+  Encabezado con los datos clave (expectativa por Elo, rating, partidas, rendimiento sobre el Elo, forma); barra
+  lateral con mi perfil, los rivales (rating y mi expectativa contra cada uno, con scroll propio) y los botones de
+  datos siempre a la vista; progreso de las tareas en una barra inferior.
 - **Modo PGN** (Configuración → Origen de las partidas): usa los PGN de `data/pgn/` (p.ej. exportados de la
   Mega Database de ChessBase). La carpeta manda: archivos nuevos o cambiados se reimportan y los que se sacan se
   borran de la base. Buscador de jugadores en la barra lateral para elegir rivales; "yo" es mi nombre en los PGN.
