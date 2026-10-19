@@ -19,7 +19,13 @@ from typing import Any
 
 import duckdb
 
-from tegchess.analysis.expectation import confidence, expected_with_adjustments, wilson
+from tegchess.analysis.expectation import (
+    MIN_POSITION_GAMES,
+    confidence,
+    expected_with_adjustments,
+    wilson,
+    worth_correcting,
+)
 from tegchess.analysis.lines import line_to_position, opening_at, san
 from tegchess.analysis.openings import opening_summary, repeated_positions
 from tegchess.analysis.scope import scope_cte
@@ -138,7 +144,8 @@ def family_matchup(con: duckdb.DuckDBPyConnection, cfg: Config, me: str, rival: 
 
 
 def battle_positions(con: duckdb.DuckDBPyConnection, cfg: Config, me: str, rival: str, my_color: str,
-                     max_ply: int | None = None, min_games: int = 2, base: float = 0.5) -> list[dict[str, Any]]:
+                     max_ply: int | None = None, min_games: int = MIN_POSITION_GAMES,
+                     base: float = 0.5) -> list[dict[str, Any]]:
     """Posiciones a las que llegamos los dos, con puntaje esperado y, si me toca mover, mis opciones."""
     max_ply = max_ply or max(cfg.analysis.opening_depth_plies, 16)
     riv_color = opposite(my_color)
@@ -187,8 +194,8 @@ def battle_positions(con: duckdb.DuckDBPyConnection, cfg: Config, me: str, rival
                                 (after.residual if after else None, after.n if after else 0)),
                 })
             opts.sort(key=lambda o: o["expected_pct"], reverse=True)
-            # Para recomendar una jugada hace falta algo de muestra (mía o de él después de ella).
-            item["options"] = [o for o in opts if o["my_games"] + o["rival_games"] >= 3] or opts[:1]
+            # Para recomendar una jugada hace falta muestra propia o de él después de ella.
+            item["options"] = [o for o in opts if max(o["my_games"], o["rival_games"]) >= MIN_POSITION_GAMES]
             item["usual_san"] = my_moves[epd][0]["san"] if my_moves.get(epd) else None
         else:
             # Lo que suele jugar él y cómo me fue a mí contra cada respuesta.
@@ -216,8 +223,10 @@ def select_battles(battles: list[dict[str, Any]], limit: int = 8) -> dict[str, l
 
 def reinforce_positions(con: duckdb.DuckDBPyConnection, cfg: Config, me: str, rival: str, my_color: str,
                         limit: int = 10) -> list[dict[str, Any]]:
-    """Mis posiciones repetidas con pérdida alta que también aparecen en las partidas del rival."""
-    mine = [r for r in repeated_positions(con, cfg, me, color=my_color, limit=60) if (r["avg_wp_loss"] or 0) >= 4]
+    """Mis posiciones repetidas donde mi jugada habitual pierde de verdad y que también aparecen en sus partidas."""
+    mine = [r for r in repeated_positions(con, cfg, me, color=my_color, limit=200)
+            if (r["usual_count"] or 0) >= MIN_POSITION_GAMES and (r["usual_wp_loss"] or 0) >= 5
+            and r["usual_uci"] != r["best_uci"]]
     if not mine:
         return []
     cte, params = scope_cte(cfg, rival, opposite(my_color))
@@ -233,11 +242,11 @@ def reinforce_positions(con: duckdb.DuckDBPyConnection, cfg: Config, me: str, ri
     out = []
     for r in mine:
         n, score = rival_at.get(r["epd"], (0, None))
-        if not n:
+        if n < MIN_POSITION_GAMES:
             continue
         out.append({**r, "fen": epd_to_fen(r["epd"]), "rival_games": n, "rival_score_pct": _pct(score),
                     "best_san": san(r["epd"], r["best_uci"])})
-    out.sort(key=lambda r: r["avg_wp_loss"] * r["occurrences"], reverse=True)
+    out.sort(key=lambda r: r["usual_wp_loss"] * r["usual_count"], reverse=True)
     return out[:limit]
 
 

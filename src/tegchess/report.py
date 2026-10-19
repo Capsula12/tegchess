@@ -20,7 +20,13 @@ from tegchess.analysis.crossover import (
 )
 from tegchess.analysis.clock import time_profile
 from tegchess.analysis.comparison import profile_comparison
-from tegchess.analysis.expectation import matchup_base, strength
+from tegchess.analysis.expectation import (
+    MIN_FAMILY_GAMES,
+    MIN_POSITION_GAMES,
+    matchup_base,
+    strength,
+    worth_correcting,
+)
 from tegchess.analysis.improvement import improvement_section
 from tegchess.analysis.lines import line_to, san
 from tegchess.analysis.openings import opening_summary, repeated_positions, repertoire_tree
@@ -76,16 +82,17 @@ def profile(con: duckdb.DuckDBPyConnection, cfg: Config, player: str) -> dict[st
 
 
 def weak_positions(con: duckdb.DuckDBPyConnection, cfg: Config, player: str, limit: int = 25) -> list[dict[str, Any]]:
-    """Posiciones repetidas del jugador con su jugada habitual vs. la del motor, y la línea para llegar."""
+    """Posiciones repetidas donde su jugada habitual pierde de verdad (≥ imprecisión) y el motor prefiere otra."""
     out = []
-    rows = repeated_positions(con, cfg, player, limit=limit)
+    fetch = limit * 4   # se piden de más: muchas no pasan el filtro
+    rows = repeated_positions(con, cfg, player, limit=fetch)
     # Las evaluaciones de Lichess no traen la mejor jugada: se completan con Stockfish.
     if ensure_best_moves(con, cfg, [r["epd"] for r in rows if not r["best_uci"]]):
-        rows = repeated_positions(con, cfg, player, limit=limit)
-    for r in rows:
-        # Sin pérdida, o su jugada habitual ya es la del motor y pierde poco: no es una debilidad.
-        if (r["avg_wp_loss"] or 0) < 2 or (r["usual_uci"] == r["best_uci"] and r["avg_wp_loss"] < 5):
-            continue
+        rows = repeated_positions(con, cfg, player, limit=fetch)
+    rows = [r for r in rows if (r["usual_count"] or 0) >= MIN_POSITION_GAMES
+            and worth_correcting(r["usual_uci"], r["best_uci"], r["usual_wp_loss"])]
+    rows.sort(key=lambda r: r["usual_wp_loss"] * r["usual_count"], reverse=True)
+    for r in rows[:limit]:
         sample = r["sample_games"][0]
         ply = con.execute(
             "SELECT ply FROM moves WHERE game_id = ? AND epd_before = ? ORDER BY ply LIMIT 1", [sample, r["epd"]]
@@ -195,7 +202,8 @@ def build_plan(matchup: dict[str, Any] | None, traps: list[dict[str, Any]], time
                 "line": t["line"], "shapes": _arrow(t.get("best_reply_uci"), "green")})
 
         if m:
-            fams = [f for f in m["families"] if f["my_games"] >= 3 and f["rival_games"] >= 2]
+            fams = [f for f in m["families"]
+                    if f["my_games"] >= MIN_FAMILY_GAMES and f["rival_games"] >= MIN_FAMILY_GAMES]
             for i, f in enumerate(fams[:2]):
                 label = "Escenario más favorable" if i == 0 else "Otro escenario favorable"
                 ev = "" if f["eval_for_me"] is None else f"salís de la apertura con {f['eval_for_me'] / 100:+.2f} de media; "
@@ -239,13 +247,16 @@ def build_plan(matchup: dict[str, Any] | None, traps: list[dict[str, Any]], time
                     f"{_games(bt['rival_games'])}.",
                     "line": bt["line"], "shapes": []})
 
-            for r in m["reinforce"][:2]:
+            for r in [r for r in m["reinforce"] if worth_correcting(r["usual_uci"], r["best_uci"],
+                                                                     r["usual_wp_loss"])][:2]:
                 items.append({"kind": "reforzar", "text":
                     f"Reforzá: {_where(r, capital=False)} solés jugar {r['usual_san']} "
-                    f"(pierde {r['avg_wp_loss']:.0f} puntos de % de victoria); el motor prefiere {r['best_san'] or '–'}. "
+                    f"{r['usual_count']} veces (pierde {r['usual_wp_loss']:.0f} puntos de % de victoria); el motor "
+                    f"prefiere {r['best_san']}. "
                     f"Él llega a esta posición en {_games(r['rival_games'])}.",
                     "line": r["line"], "shapes": _arrow(r["usual_uci"], "red") + _arrow(r["best_uci"], "green")})
-            for f in [f for f in m["families"] if f["reinforce"]][:2]:
+            for f in [f for f in m["families"] if f["reinforce"] and f["my_games"] >= MIN_FAMILY_GAMES
+                      and f["rival_games"] >= MIN_FAMILY_GAMES][:2]:
                 items.append({"kind": "reforzar", "text":
                     f"Reforzá {f['opening']}: tu pérdida media en la apertura es {f['my_cpl']:.0f} cp y la de él "
                     f"{f['rival_cpl']:.0f} cp."})
@@ -254,6 +265,36 @@ def build_plan(matchup: dict[str, Any] | None, traps: list[dict[str, Any]], time
 
 
 ME_KEY = "_me"   # archivo del perfil propio (los ids de jugador nunca empiezan con "_")
+
+
+def _tree_epds(node: dict[str, Any]) -> set[str]:
+    out = {" ".join(node["fen"].split()[:4])}
+    for child in node["children"]:
+        out |= _tree_epds(child)
+    return out
+
+
+def tree_overlap(con: duckdb.DuckDBPyConnection, cfg: Config, other: str, other_color: str,
+                 tree: dict[str, Any]) -> dict[str, int]:
+    """EPD -> cuántas partidas de `other` (con `other_color`) pasan por cada posición del árbol."""
+    epds = list(_tree_epds(tree))
+    cte, params = scope_cte(cfg, other, other_color)
+    out: dict[str, int] = {}
+    for i in range(0, len(epds), 1000):
+        chunk = epds[i:i + 1000]
+        marks = ",".join("?" for _ in chunk)
+        out.update(dict(con.execute(f"""
+            WITH {cte},
+            pos AS (
+                SELECT s.game_id, m.epd_after AS epd FROM scope s JOIN moves m ON m.game_id = s.game_id
+                WHERE m.epd_after IN ({marks})
+                UNION
+                SELECT s.game_id, m.epd_before FROM scope s JOIN moves m ON m.game_id = s.game_id
+                WHERE m.ply = 1 AND m.epd_before IN ({marks})
+            )
+            SELECT epd, count(DISTINCT game_id) FROM pos GROUP BY epd
+        """, [*params, *chunk, *chunk]).fetchall()))
+    return out
 
 
 def me_section(con: duckdb.DuckDBPyConnection, cfg: Config, me: str) -> dict[str, Any]:
@@ -298,6 +339,14 @@ def build_report(con: duckdb.DuckDBPyConnection, cfg: Config, rival: str,
     base_score = base["expected_pct"] / 100 if base else 0.5
     matchup = {c: matchup_section(con, cfg, me, rival, c, base_score) for c in COLORS} if has_me else None
     prep = {c: prep_section(con, cfg, rival, c, me if has_me else None) for c in COLORS}
+    # Explorador: en cada posición del árbol de uno, cuántas veces llegó el otro (con el color contrario).
+    overlap = None
+    if has_me:
+        opp = {"white": "black", "black": "white"}
+        overlap = {
+            "rival": {c: tree_overlap(con, cfg, me, opp[c], rival_section["trees"][c]) for c in COLORS},
+            "me": {c: tree_overlap(con, cfg, rival, opp[c], me_sec["trees"][c]) for c in COLORS},
+        }
     eval_coverage = con.execute(f"""
         SELECT count(*) FILTER (WHERE e.epd IS NOT NULL), count(*)
         FROM moves m LEFT JOIN evals e ON e.epd = m.epd_after
@@ -326,6 +375,7 @@ def build_report(con: duckdb.DuckDBPyConnection, cfg: Config, rival: str,
         "me": me_sec,
         "base": base,
         "prep": prep,
+        "tree_overlap": overlap,
         "matchup": matchup,
         "plan": build_plan(matchup, rival_section["traps"], rival_section["profile"]["time"]["hints"], prep, base),
     }

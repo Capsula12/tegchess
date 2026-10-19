@@ -6,6 +6,7 @@ from typing import Any
 
 import duckdb
 
+from tegchess.analysis.expectation import MIN_PROFILE_GAMES
 from tegchess.analysis.scope import scope_cte
 from tegchess.config import Config
 from tegchess.db import fetch_dicts
@@ -126,7 +127,7 @@ def time_hints(tp: dict[str, Any]) -> list[str]:
     """Ideas para la partida a partir del perfil de tiempo (frases cortas, en segunda persona)."""
     s = tp["summary"]
     hints: list[str] = []
-    if not s["games"] or s["games"] < 10:
+    if not s["games"] or s["games"] < MIN_PROFILE_GAMES:
         return hints
     trouble = tp["thresholds"]["trouble_pct"]
     if s["trouble_pct"] is not None and s["trouble_pct"] >= 30:

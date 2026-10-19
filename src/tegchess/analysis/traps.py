@@ -19,7 +19,7 @@ from typing import Any
 import chess
 import duckdb
 
-from tegchess.analysis.expectation import ENGINE_WEIGHT
+from tegchess.analysis.expectation import ENGINE_WEIGHT, MIN_POSITION_GAMES
 from tegchess.analysis.lines import extend_line, line_to_position, pv_san, san
 from tegchess.analysis.openings import repeated_positions
 from tegchess.analysis.scope import scope_cte
@@ -92,7 +92,9 @@ def find_traps(con: duckdb.DuckDBPyConnection, cfg: Config, rival: str, me: str 
                limit: int = 15) -> list[dict[str, Any]]:
     def candidates() -> list[dict[str, Any]]:
         rows = repeated_positions(con, cfg, rival, limit=CANDIDATES)
-        return [r for r in rows if (r["usual_wp_loss"] or 0) >= MIN_LOSS and r["usual_uci"]]
+        # Su jugada habitual (al menos 3 veces) pierde mucho y no es la del motor.
+        return [r for r in rows if (r["usual_wp_loss"] or 0) >= MIN_LOSS and r["usual_uci"]
+                and (r["usual_count"] or 0) >= MIN_POSITION_GAMES and r["usual_uci"] != r["best_uci"]]
 
     cands = candidates()
     # Mejor jugada en la posición del rival y multipv en la posición tras su error.
@@ -112,7 +114,7 @@ def find_traps(con: duckdb.DuckDBPyConnection, cfg: Config, rival: str, me: str 
         if not after_epd:
             continue
         lines, _ = _lines(con, after_epd)
-        if not lines or not lines[0].get("uci"):
+        if not lines or not lines[0].get("uci") or r["best_uci"] == usual:
             continue
         punisher = "black" if r["color"] == "white" else "white"
         sign = 1 if punisher == "white" else -1

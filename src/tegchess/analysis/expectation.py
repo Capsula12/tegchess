@@ -23,6 +23,18 @@ from tegchess.metrics import win_pct
 ENGINE_WEIGHT = 0.6
 RESIDUAL_K = 30
 LOW_SAMPLE = 10          # menos partidas que esto: "poca muestra"
+# Mínimos para sacar conclusiones (las recomendaciones no se apoyan en una o dos partidas).
+MIN_POSITION_GAMES = 3   # una posición o una jugada concreta
+MIN_FAMILY_GAMES = 5     # una familia de aperturas
+MIN_PROFILE_GAMES = 20   # rasgos generales (reloj, rendimiento)
+# Una jugada "a corregir" pierde al menos una imprecisión según Lichess (5 puntos de % de victoria)
+# y no es la jugada del motor.
+MIN_MOVE_LOSS = 5.0
+
+
+def worth_correcting(usual_uci: str | None, best_uci: str | None, usual_wp_loss: float | None) -> bool:
+    """¿Vale la pena marcar esta jugada habitual? Pierde de verdad y el motor prefiere otra."""
+    return bool(usual_uci and best_uci and usual_uci != best_uci and (usual_wp_loss or 0) >= MIN_MOVE_LOSS)
 RECENT_GAMES = 30
 
 
