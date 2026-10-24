@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import logging
 import threading
 import time
@@ -16,7 +17,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 
-from tegchess import pipeline
+from tegchess import pipeline, position, vision
 from tegchess.pdf import PDF_DIR, export_pdfs
 from tegchess.config import Config, find_stockfish, lichess_token, load_config, normalize_player, report_key, save_config
 from tegchess.analysis.training import TrainingStore
@@ -24,6 +25,17 @@ from tegchess.pgn_import import search_players
 from tegchess.report import WEB_DIR
 
 log = logging.getLogger(__name__)
+
+
+class ImageRequest(BaseModel):
+    image: str                         # captura en base64 (data URL)
+    white_bottom: bool | None = None   # forzar la orientación
+    name: str | None = None            # para calibrar un perfil nuevo
+
+
+class PositionRequest(BaseModel):
+    fen: str
+    multipv: int = 3
 
 
 class TrainingResult(BaseModel):
@@ -166,6 +178,44 @@ def create_app() -> FastAPI:
             raise HTTPException(422, "result tiene que ser right o wrong")
         store, mode = training_store()
         return store.record(mode, req.id, req.result)
+
+    # --- Analizar posición (capturas de tableros digitales + Stockfish) ----------------------
+    def vision_dir() -> Path:
+        return load_config().data_path / "vision_profiles"
+
+    @app.get("/api/vision/profiles")
+    def vision_profiles() -> list[str]:
+        return [p.name for p in vision.list_profiles(vision_dir())]
+
+    @app.post("/api/vision/recognize")
+    def vision_recognize(req: ImageRequest) -> dict[str, Any]:
+        try:
+            return vision.recognize(vision.load_image(req.image), vision.list_profiles(vision_dir()), req.white_bottom)
+        except (ValueError, OSError) as e:
+            raise HTTPException(422, f"No pude leer el tablero: {e}") from e
+
+    @app.post("/api/vision/calibrate")
+    def vision_calibrate(req: ImageRequest) -> dict[str, Any]:
+        name = (req.name or "").strip()
+        if not name:
+            raise HTTPException(422, "Poné un nombre para el perfil (p.ej. chess.com)")
+        try:
+            profile, _box, white_bottom = vision.calibrate(vision.load_image(req.image), name)
+        except (ValueError, OSError) as e:
+            raise HTTPException(422, f"No pude calibrar: {e}") from e
+        folder = vision_dir()
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / f"{report_key(normalize_player(name))}.json").write_text(json.dumps(profile.to_json()), encoding="utf-8")
+        return {"name": name, "white_bottom": white_bottom}
+
+    @app.post("/api/position/analyze")
+    def position_analyze(req: PositionRequest) -> dict[str, Any]:
+        try:
+            return position.analyse(load_config(), req.fen, multipv=max(1, min(req.multipv, 5)))
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
+        except RuntimeError as e:
+            raise HTTPException(503, str(e)) from e
 
     @app.get("/api/players")
     def players(q: str = "", limit: int = 30) -> list[dict[str, Any]]:
