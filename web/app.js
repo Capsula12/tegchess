@@ -23,6 +23,8 @@
     status: null,         // /api/status: modo (lichess | pgn), yo, rivales
     me: null,             // mi perfil general (/api/me)
     train: { cards: {}, queue: [], idx: 0, filter: "all", answered: null, session: { right: 0, wrong: 0 }, loaded: false },
+    pos: { image: null, rec: null, placement: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR", turn: "w", castling: "KQkq",
+      whiteBottom: true, analysis: null, busy: false, msg: "" },
     view: "rival",        // rival | profile
   };
 
@@ -131,7 +133,15 @@
 
   function disableMove() {
     $(".board-panel").classList.remove("training");
-    cg.set({ draggable: { enabled: false }, selectable: { enabled: false }, movable: { color: undefined, dests: new Map() } });
+    cg.set({ draggable: { enabled: false, deleteOnDropOff: false }, selectable: { enabled: false },
+      movable: { free: false, color: undefined, dests: new Map() }, events: { change: undefined } });
+  }
+
+  // Modo edición (Analizar posición): mover piezas libremente, sacarlas arrastrándolas afuera, agregar desde la paleta.
+  function enableEdit(onChange) {
+    $(".board-panel").classList.add("training");
+    cg.set({ movable: { free: true, color: "both", dests: undefined }, draggable: { enabled: true, deleteOnDropOff: true },
+      selectable: { enabled: true }, events: { change: onChange } });
   }
 
   function renderBoard() {
@@ -825,6 +835,228 @@
     $(".main").scrollTop = 0;
   }
 
+  // ---------------------------------------------------------------- Analizar posición
+  const posFen = () => `${state.pos.placement} ${state.pos.turn} ${state.pos.castling || "-"} - 0 1`;
+
+  function showPosition() {
+    state.view = "position";
+    state.tab = "position";
+    $$("[data-tab]").forEach((b) => b.classList.remove("active"));
+    $$(".tab").forEach((t) => t.classList.toggle("hidden", t.id !== "tab-position"));
+    $("#tabs").classList.add("hidden");
+    renderRivalList();
+    renderTab();
+    editBoard();
+  }
+
+  function editBoard() {
+    const p = state.pos;
+    setLine([], { startFen: posFen(), caption: "Editá la posición: arrastrá piezas, sacalas afuera o agregá desde la paleta",
+      view: { label: "Analizar posición", cls: "info", title: "Corregí lo que haga falta antes de analizar.",
+        bottom: { name: "", role: "", color: p.whiteBottom ? "white" : "black" },
+        top: { name: "", role: "", color: p.whiteBottom ? "black" : "white" } } });
+    enableEdit(() => {
+      state.pos.placement = cg.getFen();
+      state.pos.analysis = null;
+      const f = $("#pos-fen");
+      if (f) f.value = posFen();
+      renderPosResults();
+    });
+  }
+
+  async function recognizeImage(dataUrl, whiteBottom = null) {
+    const p = state.pos;
+    p.image = dataUrl;
+    p.busy = true; p.msg = "Leyendo el tablero…"; renderPosition();
+    try {
+      const r = await api("/api/vision/recognize", { method: "POST", body: JSON.stringify({ image: dataUrl, white_bottom: whiteBottom }) });
+      p.rec = r;
+      p.placement = r.placement;
+      p.whiteBottom = r.white_bottom;
+      p.castling = r.castling;
+      if (r.turn) p.turn = r.turn;
+      p.analysis = null;
+      p.msg = "";
+    } catch (err) {
+      p.msg = err.message;
+    }
+    p.busy = false;
+    renderPosition();
+    editBoard();
+  }
+
+  async function analysePosition() {
+    const p = state.pos;
+    p.busy = true; p.msg = "Stockfish pensando…"; renderPosition();
+    try {
+      p.analysis = await api("/api/position/analyze", { method: "POST", body: JSON.stringify({ fen: posFen(), multipv: 3 }) });
+      p.msg = "";
+    } catch (err) {
+      p.analysis = null;
+      p.msg = err.message;
+    }
+    p.busy = false;
+    renderPosition();
+    if (p.analysis && p.analysis.lines.length) showPv(0); else editBoard();
+  }
+
+  function showPv(i) {
+    const p = state.pos;
+    const l = p.analysis.lines[i];
+    // El servidor manda la posición tras cada jugada de la variante (enroques y capturas al paso incluidos).
+    const steps = l.steps.map((st, k) => Object.assign({}, st, { cp: k === 0 ? l.cp : null, mate: k === 0 ? l.mate : null }));
+    setLine(steps, { startFen: posFen(), idx: 0, caption: `Variante ${i + 1}: ${l.pv_san}`,
+      shapes: [{ orig: l.uci.slice(0, 2), dest: l.uci.slice(2, 4), brush: "green" }],
+      view: { label: `Mejor jugada ${i + 1}`, cls: "good", title: `${esc(l.pv_san)}`,
+        bottom: { name: "", role: "", color: p.whiteBottom ? "white" : "black" },
+        top: { name: "", role: "", color: p.whiteBottom ? "black" : "white" } } });
+    $$(".pv-line").forEach((el) => el.classList.toggle("active", +el.dataset.i === i));
+  }
+
+  function evalLabel(cp, mate) {
+    if (mate) return `M${Math.abs(mate)} ${mate > 0 ? "blancas" : "negras"}`;
+    if (cp === null || cp === undefined) return "–";
+    return `${cp > 0 ? "+" : ""}${(cp / 100).toFixed(2)}`;
+  }
+
+  function renderPosResults() {
+    const box = $("#pos-results");
+    if (!box) return;
+    const a = state.pos.analysis;
+    if (!a) { box.innerHTML = '<p class="muted">Tocá <b>Analizar con Stockfish</b> para ver la evaluación y las mejores jugadas.</p>'; return; }
+    if (a.game_over) { box.innerHTML = `<div class="eval-big">${a.game_over === "mate" ? "Jaque mate" : "Tablas"}</div>`; return; }
+    const best = a.lines[0];
+    const who = best.mate ? (best.mate > 0 ? "ganan las blancas" : "ganan las negras")
+      : Math.abs(best.cp) < 30 ? "igualado" : `mejor ${best.cp > 0 ? "blancas" : "negras"}`;
+    box.innerHTML = `
+      <div class="row"><span class="eval-big">${evalLabel(best.cp, best.mate)}</span><span class="muted">${who} · profundidad ${best.depth}</span></div>
+      ${a.lines.map((l, i) => `<div class="pv-line" data-i="${i}"><span class="mv">${i + 1}. ${esc(l.san)}</span>
+        <span>${evalLabel(l.cp, l.mate)}</span><span class="pv" title="${esc(l.pv_san)}">${esc(l.pv_san)}</span></div>`).join("")}
+      <div class="row"><button id="pos-edit">Volver a editar</button></div>`;
+    $$(".pv-line", box).forEach((el) => el.addEventListener("click", () => showPv(+el.dataset.i)));
+    $("#pos-edit", box).addEventListener("click", editBoard);
+  }
+
+  async function renderPosition() {
+    const root = $("#tab-position");
+    const p = state.pos;
+    const rec = p.rec;
+    const spare = ["king", "queen", "rook", "bishop", "knight", "pawn"];
+    root.innerHTML = `
+      <div class="dropzone" id="pos-drop">
+        <b>Pegá una captura (Ctrl+V), arrastrala acá o hacé clic para elegirla</b>
+        <div class="muted">Tableros digitales: Lichess, chess.com, etc. La pantalla entera también sirve.</div>
+        ${p.image ? `<img src="${p.image}" alt="captura">` : ""}
+        <input type="file" id="pos-file" accept="image/*" hidden>
+      </div>
+      ${p.msg ? `<p class="${p.busy ? "muted" : "pct-bad"}">${esc(p.msg)}</p>` : ""}
+      ${rec ? `<p class="muted">Reconocido con el perfil <b>${esc(rec.profile)}</b> · confianza ${Math.round(rec.confidence * 100)}%
+        ${rec.doubtful.length ? ` · revisá: <b>${rec.doubtful.join(", ")}</b>` : ""}
+        ${rec.turn ? ` · el turno sale de la última jugada resaltada (${rec.last_move.join("–")})` : ""}.
+        Si algo está mal, corregilo en el tablero.</p>` : ""}
+      <div class="pos-grid">
+        <div class="pos-box">
+          <h3>Posición</h3>
+          <div class="row">Turno: ${seg("pt", [["w", "Blancas"], ["b", "Negras"]], p.turn)}</div>
+          <div class="row">Enroques:
+            ${["K", "Q", "k", "q"].map((c) => `<label><input type="checkbox" data-castle="${c}" ${p.castling.includes(c) ? "checked" : ""}>
+              ${{ K: "O-O blancas", Q: "O-O-O blancas", k: "O-O negras", q: "O-O-O negras" }[c]}</label>`).join(" ")}</div>
+          <div class="row">${seg("po", [["w", "Blancas abajo"], ["b", "Negras abajo"]], p.whiteBottom ? "w" : "b")}
+            ${p.image ? '<span class="muted">(vuelve a leer la captura con esa orientación)</span>' : ""}</div>
+          <input class="fen-input" id="pos-fen" value="${esc(posFen())}" spellcheck="false" title="FEN: también lo podés pegar">
+          <div class="row">
+            <button class="primary" id="pos-analyze" ${p.busy ? "disabled" : ""}>Analizar con Stockfish</button>
+            <button id="pos-copy">Copiar FEN</button>
+            <a href="https://lichess.org/analysis/${posFen().replace(/ /g, "_")}" target="_blank" rel="noopener">Abrir en Lichess</a>
+          </div>
+          <div class="row"><span class="muted">Agregar piezas (arrastralas al tablero):</span></div>
+          <div class="cg-wrap spare">${["white", "black"].map((c) => spare.map((r) =>
+            `<piece class="${r} ${c}" data-role="${r}" data-color="${c}" title="${r}"></piece>`).join("")).join("")}</div>
+          <div class="row"><button id="pos-clear">Vaciar tablero</button><button id="pos-start">Posición inicial</button></div>
+        </div>
+        <div class="pos-box"><h3>Análisis</h3><div id="pos-results"></div></div>
+      </div>
+      <details class="pos-box" style="margin-top:12px">
+        <summary><b>Calibrar otro sitio o juego de piezas</b></summary>
+        <p class="muted">Viene incluido el de Lichess. Para otro (p.ej. chess.com): poné en ese sitio la <b>posición inicial</b>,
+          sacá una captura, pegala arriba y guardala acá con un nombre. Se hace una sola vez por juego de piezas.</p>
+        <div class="row"><input id="cal-name" placeholder="Nombre (p.ej. chess.com)">
+          <button id="cal-save" ${p.image ? "" : "disabled"}>Calibrar con la captura de arriba</button>
+          <span class="muted" id="cal-msg"></span></div>
+        <div class="muted" id="cal-profiles"></div>
+      </details>`;
+    renderPosResults();
+    const drop = $("#pos-drop", root);
+    const file = $("#pos-file", root);
+    drop.addEventListener("click", () => file.click());
+    file.addEventListener("change", () => file.files[0] && readImage(file.files[0]));
+    drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+    drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+    drop.addEventListener("drop", (e) => {
+      e.preventDefault(); drop.classList.remove("over");
+      const f = [...e.dataTransfer.files].find((x) => x.type.startsWith("image/"));
+      if (f) readImage(f);
+    });
+    bindSeg(root, "pt", (v) => { p.turn = v; p.analysis = null; renderPosition(); editBoard(); });
+    bindSeg(root, "po", (v) => {
+      const wb = v === "w";
+      if (p.image) recognizeImage(p.image, wb);
+      else { p.whiteBottom = wb; renderPosition(); editBoard(); }
+    });
+    $$("[data-castle]", root).forEach((c) => c.addEventListener("change", () => {
+      p.castling = $$("[data-castle]", root).filter((x) => x.checked).map((x) => x.dataset.castle).join("") || "-";
+      $("#pos-fen").value = posFen();
+    }));
+    $("#pos-fen", root).addEventListener("change", (e) => {
+      const parts = e.target.value.trim().split(/\s+/);
+      if (parts[0] && parts[0].split("/").length === 8) {
+        p.placement = parts[0]; p.turn = parts[1] === "b" ? "b" : "w"; p.castling = parts[2] || "-";
+        p.analysis = null; renderPosition(); editBoard();
+      }
+    });
+    $("#pos-analyze", root).addEventListener("click", analysePosition);
+    $("#pos-copy", root).addEventListener("click", () => navigator.clipboard && navigator.clipboard.writeText(posFen()));
+    $("#pos-clear", root).addEventListener("click", () => { p.placement = "8/8/8/8/8/8/8/8"; p.castling = "-"; p.analysis = null; renderPosition(); editBoard(); });
+    $("#pos-start", root).addEventListener("click", () => {
+      p.placement = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR"; p.castling = "KQkq"; p.turn = "w"; p.analysis = null;
+      renderPosition(); editBoard();
+    });
+    $$(".spare piece", root).forEach((el) => {
+      const start = (e) => cg.dragNewPiece({ role: el.dataset.role, color: el.dataset.color }, e, true);
+      el.addEventListener("mousedown", start);
+      el.addEventListener("touchstart", start, { passive: false });
+    });
+    $("#cal-save", root).addEventListener("click", async () => {
+      const name = $("#cal-name").value.trim();
+      try {
+        await api("/api/vision/calibrate", { method: "POST", body: JSON.stringify({ image: p.image, name }) });
+        $("#cal-msg").textContent = `Listo: perfil "${name}" guardado.`;
+        loadProfiles();
+      } catch (err) { $("#cal-msg").textContent = err.message; }
+    });
+    loadProfiles();
+  }
+
+  async function loadProfiles() {
+    const el = $("#cal-profiles");
+    if (!el) return;
+    const names = await api("/api/vision/profiles").catch(() => []);
+    el.textContent = names.length ? `Perfiles disponibles: ${names.join(", ")}` : "";
+  }
+
+  function readImage(fileObj) {
+    const reader = new FileReader();
+    reader.onload = () => recognizeImage(reader.result);
+    reader.readAsDataURL(fileObj);
+  }
+
+  // Pegar una captura con Ctrl+V mientras está abierto el módulo.
+  document.addEventListener("paste", (e) => {
+    if (state.view !== "position") return;
+    const item = [...(e.clipboardData || {}).items || []].find((x) => x.type.startsWith("image/"));
+    if (item) { e.preventDefault(); readImage(item.getAsFile()); }
+  });
+
   // ---------------------------------------------------------------- Tiempo
   const PHASES = { opening: "Apertura", middlegame: "Medio juego", endgame: "Final" };
 
@@ -1299,6 +1531,11 @@
   }
 
   function renderHero() {
+    if (state.view === "position") {
+      setHero({ eyebrow: "Herramientas", title: "Analizar posición",
+        sub: "Desde una captura de un tablero digital o un FEN, con tu Stockfish local: evaluación y las 3 mejores jugadas." });
+      return;
+    }
     if (state.view === "train") {
       const st = trainStats();
       setHero({ eyebrow: "Entrenamiento", title: "Entrenar aperturas",
@@ -1388,7 +1625,7 @@
       const r = state.reports[e.key];
       const s = r ? r.rival.profile.summary : null;
       const exp = r && r.base ? r.base.expected_pct : null;
-      return `<li data-rival="${esc(e.key)}" class="${e.key === state.rival && state.tab !== "config" && !["profile", "train"].includes(state.view) ? "active" : ""}${r ? "" : " no-report"}">
+      return `<li data-rival="${esc(e.key)}" class="${e.key === state.rival && state.tab !== "config" && !["profile", "train", "position"].includes(state.view) ? "active" : ""}${r ? "" : " no-report"}">
         <div class="r-main"><div class="r-name">${esc(e.name)}</div>
           <div class="r-sub">${s ? `${fmt(s.last_rating)} · ${s.games} partidas` : "sin informe todavía"}</div></div>
         ${exp !== null ? `<span class="r-exp ${expClass(exp)}" title="Tu expectativa por Elo contra este rival">${fmt(exp)}%</span>` : ""}
@@ -1403,7 +1640,7 @@
       state.rival = li.dataset.rival;
       state.tree.path = [];
       if (state.view === "train" && state.train.filter === "rival") { state.train.queue = []; renderRivalList(); renderTab(); }
-      else if (state.tab === "config" || state.view === "profile" || state.view === "train") { state.view = "rival"; showTab("summary"); }
+      else if (state.tab === "config" || ["profile", "train", "position"].includes(state.view)) { state.view = "rival"; showTab("summary"); }
       else { renderRivalList(); renderTab(); }
       $(".main").scrollTop = 0;
     }));
@@ -1422,6 +1659,13 @@
 
   function renderTab() {
     renderMeEntry();
+    $$("[data-tool]").forEach((li) => li.classList.toggle("active", state.view === li.dataset.tool));
+    if (state.view === "position") {
+      renderHero();
+      $("#empty").classList.add("hidden");
+      $("#print-btn").classList.add("hidden");
+      return renderPosition();
+    }
     if (state.view === "train") {
       renderHero();
       $("#empty").classList.add("hidden");
@@ -1549,6 +1793,7 @@
   }
 
   $$("[data-tab]").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+  $$("[data-tool=position]").forEach((li) => li.addEventListener("click", showPosition));
   $$("[data-job]").forEach((b) => b.addEventListener("click", () => startJob(b.dataset.job)));
   $("#print-btn").addEventListener("click", openPdfDialog);
 
