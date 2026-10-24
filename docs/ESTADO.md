@@ -34,6 +34,12 @@
   (línea principal, correcciones de jugadas habituales que pierden y desvíos) y, por rival, sus trampas y mis líneas
   de preparación. Se juega en el tablero (jugadas legales precalculadas); repetición espaciada tipo Leitner
   (1, 3, 7, 14, 30, 60 días). Progreso en `data/training.json` por modo (o en el navegador en la exportación estática).
+- **Analizar posición** (barra lateral → Herramientas): pegar (Ctrl+V), arrastrar o elegir una captura de un tablero
+  digital (Lichess, chess.com…), corregir en un tablero editable, elegir turno/enroques y analizar con el Stockfish
+  local (evaluación + 3 mejores con su variante, clickeables en el tablero). También acepta un FEN. Reconocimiento sin
+  IA (`vision.py`): cuadrícula por bordes que alternan de signo + siluetas de piezas por perfil. Incluye el perfil de
+  Lichess; otros sitios se calibran una vez con una captura de la posición inicial (`data/vision_profiles/`). Adivina el
+  turno por la última jugada resaltada. Probado con capturas reales de Lichess y chess.com (tablero girado incluido).
 - **Tablero**: cada cosa que se abre dice qué es ("Tu preparación", "Línea del rival", "Trampa para vos"...), mira
   desde el lado de quien juega esa línea (vos o el rival), con los nombres y colores arriba y abajo, y muestra la
   barra de evaluación de Stockfish con las evaluaciones ya guardadas (no corre un motor en el navegador).

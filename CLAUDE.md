@@ -53,6 +53,8 @@ Para probar sin tocar los datos del usuario: apuntar `TEGCHESS_CONFIG` a un yaml
 | `analysis/lines.py` | línea para llegar a una posición, SAN, variantes numeradas |
 | `report.py` | arma el JSON del informe (+ plan de partida) y exporta HTML estático |
 | `pdf.py` | PDF por rival en `informes/` con Edge/Chrome headless (`?print=<rival>`) |
+| `vision.py` | reconocer la posición de una captura de tablero digital (sin IA): cuadrícula + siluetas por perfil |
+| `position.py` | analizar una posición suelta con Stockfish (multipv, variantes con FEN por jugada) |
 | `pipeline.py` | pasos compartidos por CLI y servidor |
 | `server.py` | FastAPI: informes, config, tareas largas con progreso (una a la vez) |
 | `web/` | HTML + JS vanilla sin build; chessground convertido a script clásico |
@@ -81,6 +83,8 @@ Para probar sin tocar los datos del usuario: apuntar `TEGCHESS_CONFIG` a un yaml
 - El servidor manda `Cache-Control: no-store`: sin eso el navegador mostraba informes viejos después de regenerarlos.
 - Tablero (chessground): se crea manipulable pero sin jugadas permitidas; si se crea `viewOnly`, nunca escucha el
   mouse aunque después se lo habilite. El entrenamiento habilita las jugadas con `enableMove`.
+- Perfiles de piezas: el de Lichess va en el repo (`vision_profiles/`); los calibrados por el usuario (p.ej. chess.com)
+  van en `data/vision_profiles/` y no se suben (son de piezas con derechos de otros sitios).
 - Columnas JSON (`evals.lines`): pasar objetos Python a `db.bulk_insert`, no strings ya serializados
   (si no, quedan doblemente codificados; `traps._lines` tolera filas viejas así).
 - `web/` tiene que funcionar con `file://` (exportación estática): nada de módulos ES.
