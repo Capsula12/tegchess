@@ -36,8 +36,14 @@ PIECES = "PNBRQK"
 # --- imagen ------------------------------------------------------------------------
 
 
+# Una captura de pantalla no pasa de 4K-8K: más que esto es un archivo armado para agotar la memoria.
+Image.MAX_IMAGE_PIXELS = 40_000_000
+
+
 def load_image(data: bytes | str | Path) -> np.ndarray:
-    """RGB float (alto, ancho, 3) desde bytes, base64 (con o sin 'data:...') o una ruta."""
+    """RGB float (alto, ancho, 3) desde bytes, base64 (con o sin 'data:...') o una ruta.
+
+    Para uso local (tests, CLI). Lo que llega por la red pasa por `load_image_b64`."""
     if isinstance(data, Path) or (isinstance(data, str) and not data.startswith("data:") and len(data) < 1024):
         img = Image.open(data)
     else:
@@ -45,6 +51,19 @@ def load_image(data: bytes | str | Path) -> np.ndarray:
             data = base64.b64decode(data.split(",", 1)[-1])
         img = Image.open(io.BytesIO(data))
     return np.asarray(img.convert("RGB"), dtype=np.float32)
+
+
+def load_image_b64(data: str) -> np.ndarray:
+    """Como `load_image`, pero solo acepta la imagen en base64 (con o sin 'data:...').
+
+    Es la que usa el servidor: un texto corto nunca se interpreta como una ruta del disco."""
+    try:
+        raw = base64.b64decode(data.split(",", 1)[-1], validate=True)
+    except (ValueError, TypeError) as e:
+        raise ValueError("la imagen no llegó en base64") from e
+    if not raw:
+        raise ValueError("la imagen llegó vacía")
+    return load_image(raw)
 
 
 def _gray(rgb: np.ndarray) -> np.ndarray:

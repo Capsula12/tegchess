@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Última actualización: 2026-10-17. Rama de trabajo: `feat/mvp` (publicada en GitHub: `Capsula12/tegchess`).
+Última actualización: 2026-11-11. Rama de trabajo: `feat/mvp` (publicada en GitHub: `Capsula12/tegchess`).
 
 ## Hecho (etapa 1, MVP)
 
@@ -65,6 +65,14 @@ Preguntas del enunciado original y cobertura:
 | 3 | Trampas que no conoce | Hecho: `analysis/traps.py` |
 | 4 | Qué reforzar yo | Hecho: pestaña "Mi juego" (`analysis/improvement.py`) + posiciones flojas que él alcanza |
 | 5 | Tiempo, fases, tipos de error, duración, estilo, tendencias | Tiempo, forma reciente y rendimiento sobre Elo para el rival; fases, tipos de error y tendencias para mí. Falta: estilo, y fases/errores del rival (sus partidas solo se analizan hasta el ply 30) |
+
+## Seguridad de la interfaz local (2026-11-11)
+
+La interfaz no tiene contraseña porque escucha solo en `127.0.0.1`. Se cerraron tres huecos: solo se
+aceptan pedidos con `Host` `127.0.0.1` o `localhost` (antes una página de internet podía hablarle con DNS
+rebinding), la API no acepta como motor nada que no sea Stockfish, y las imágenes de "Analizar posición"
+entran solo en base64 (un texto corto se interpretaba como una ruta del disco). El puerto por defecto pasó
+de 8765 a 8770.
 
 ## Próximos pasos sugeridos
 

@@ -52,7 +52,7 @@ def test_server_endpoints(con, tmp_path, raw_games, monkeypatch):
 
     from tegchess.server import create_app
 
-    client = TestClient(create_app())
+    client = TestClient(create_app(), base_url="http://127.0.0.1")
     assert client.get("/").status_code == 200
     assert client.get("/api/reports").json()[0]["rival"] == "lucky09"
     assert client.get("/api/reports/lucky09").json()["meta"]["rival"] == "lucky09"
@@ -68,3 +68,14 @@ def test_server_endpoints(con, tmp_path, raw_games, monkeypatch):
     new["opponents"] = ["a", "b"]
     assert client.put("/api/config", json=new).status_code == 200
     assert client.get("/api/config").json()["opponents"] == ["a", "b"]
+    # El motor se ejecuta: por la API solo se acepta un Stockfish, no cualquier programa.
+    new["engine"]["path"] = "C:/Windows/System32/cmd.exe"
+    assert client.put("/api/config", json=new).status_code == 422
+    assert client.get("/api/config").json()["engine"]["path"] is None
+    new["engine"]["path"] = "C:/motores/Stockfish-17.exe"
+    assert client.put("/api/config", json=new).status_code == 200
+    # Otro nombre de host (DNS rebinding: un dominio ajeno que resuelve a 127.0.0.1) no entra.
+    ajeno = TestClient(create_app(), base_url="http://sitio-ajeno.example:8770")
+    assert ajeno.get("/api/config").status_code == 400
+    assert ajeno.put("/api/config", json=new).status_code == 400
+    assert TestClient(create_app(), base_url="http://localhost:8770").get("/api/config").status_code == 200

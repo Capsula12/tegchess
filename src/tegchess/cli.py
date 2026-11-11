@@ -119,7 +119,7 @@ def report(
 
 @app.command()
 def serve(
-    port: int = typer.Option(8765, help="Puerto local"),
+    port: int = typer.Option(8770, help="Puerto local"),
     no_browser: bool = typer.Option(False, "--no-browser", help="No abrir el navegador"),
 ) -> None:
     """Levanta la interfaz web en http://127.0.0.1:PUERTO."""

@@ -64,7 +64,7 @@ def test_vision_endpoints(tmp_path, monkeypatch):
     monkeypatch.setenv("TEGCHESS_CONFIG", str(cfg_file))
     from tegchess.server import create_app
 
-    client = TestClient(create_app())
+    client = TestClient(create_app(), base_url="http://127.0.0.1")
     img = "data:image/png;base64," + base64.b64encode((FIXTURES / "board_mid_flipped.png").read_bytes()).decode()
     r = client.post("/api/vision/recognize", json={"image": img})
     assert r.status_code == 200 and r.json()["placement"] == MID
@@ -72,3 +72,7 @@ def test_vision_endpoints(tmp_path, monkeypatch):
     assert client.post("/api/vision/calibrate", json={"image": start, "name": "Mi sitio"}).status_code == 200
     assert "Mi sitio" in client.get("/api/vision/profiles").json()
     assert client.post("/api/position/analyze", json={"fen": "8/8/8/8/8/8/8/K7 w - - 0 1"}).status_code == 422
+    # Una ruta del disco no es una imagen en base64: la API no la abre.
+    ruta = str(FIXTURES / "board_start.png")
+    assert client.post("/api/vision/recognize", json={"image": ruta}).status_code == 422
+    assert client.post("/api/vision/calibrate", json={"image": ruta, "name": "x"}).status_code == 422

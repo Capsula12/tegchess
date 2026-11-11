@@ -13,6 +13,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
@@ -113,6 +114,10 @@ class NoCache(BaseHTTPMiddleware):
 def create_app() -> FastAPI:
     app = FastAPI(title="tegchess", docs_url="/api/docs")
     app.add_middleware(NoCache)
+    # La interfaz es local y sin contraseña. Sin esto, una página de internet podía hablarle
+    # con DNS rebinding (su dominio pasa a resolver a 127.0.0.1) y, cambiando la ruta del motor
+    # en la configuración, hacer que se ejecute cualquier programa.
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
     jobs = JobRunner()
 
     @app.get("/api/status")
@@ -141,6 +146,11 @@ def create_app() -> FastAPI:
             cfg = Config.model_validate(data)
         except ValidationError as e:
             raise HTTPException(422, str(e)) from e
+        # El motor es un programa que el servidor ejecuta: por la API solo se acepta Stockfish.
+        # (Para usar otro ejecutable, editar config.yaml a mano.)
+        engine = cfg.engine.path
+        if engine and not Path(engine).name.lower().startswith("stockfish"):
+            raise HTTPException(422, "engine.path tiene que ser un ejecutable de Stockfish (stockfish*.exe)")
         save_config(cfg)
         return cfg.model_dump(mode="json")
 
@@ -190,7 +200,7 @@ def create_app() -> FastAPI:
     @app.post("/api/vision/recognize")
     def vision_recognize(req: ImageRequest) -> dict[str, Any]:
         try:
-            return vision.recognize(vision.load_image(req.image), vision.list_profiles(vision_dir()), req.white_bottom)
+            return vision.recognize(vision.load_image_b64(req.image), vision.list_profiles(vision_dir()), req.white_bottom)
         except (ValueError, OSError) as e:
             raise HTTPException(422, f"No pude leer el tablero: {e}") from e
 
@@ -200,7 +210,7 @@ def create_app() -> FastAPI:
         if not name:
             raise HTTPException(422, "Poné un nombre para el perfil (p.ej. chess.com)")
         try:
-            profile, _box, white_bottom = vision.calibrate(vision.load_image(req.image), name)
+            profile, _box, white_bottom = vision.calibrate(vision.load_image_b64(req.image), name)
         except (ValueError, OSError) as e:
             raise HTTPException(422, f"No pude calibrar: {e}") from e
         folder = vision_dir()

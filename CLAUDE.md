@@ -19,7 +19,7 @@ Etapa 2 (futura): web app de práctica de repertorio con repetición espaciada. 
 ## Comandos
 
 ```bat
-run.bat                                 :: entorno + dependencias + interfaz (http://127.0.0.1:8765)
+run.bat                                 :: entorno + dependencias + interfaz (http://127.0.0.1:8770)
 .venv\Scripts\python -m pytest          :: tests (~10 s; los de motor se saltean sin Stockfish)
 .venv\Scripts\python -m tegchess doctor :: qué detectó: usuarios, Stockfish, token
 .venv\Scripts\python -m tegchess fetch | analyze | report | serve | openings USER
@@ -90,5 +90,7 @@ Para probar sin tocar los datos del usuario: apuntar `TEGCHESS_CONFIG` a un yaml
 - `web/` tiene que funcionar con `file://` (exportación estática): nada de módulos ES.
   `web/vendor/chessground.global.js` es chessground 9.2.1 (GPL-3.0) envuelto en una IIFE que expone `window.Chessground`.
 - Consola de Windows: la CLI fuerza UTF-8 en stdout/stderr (rich con caracteres de progreso).
-- `run.bat`: el separador de `::` protege una instancia que esté corriendo mientras se reescribe el
-  archivo (cmd retoma la lectura por posición de byte). Se puede sacar cuando ya no haga falta.
+- Seguridad de la interfaz local (2026-11): `TrustedHostMiddleware` solo acepta `127.0.0.1` y `localhost`
+  (los tests crean el `TestClient` con `base_url="http://127.0.0.1"`); `PUT /api/config` no acepta un
+  `engine.path` que no sea Stockfish; las imágenes de la API entran por `vision.load_image_b64` (nunca rutas).
+- Puerto por defecto 8770 (el 8765 lo usa el preview del tablero de deudas en esta PC).

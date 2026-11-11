@@ -14,8 +14,6 @@ if exist "%PY%" (
         rmdir /s /q .venv
     )
 )
-REM Separador: protege un run.bat que este corriendo mientras se actualiza el archivo.
-::::::::::::::::::::::::::::::::::::::::
 if not exist "%PY%" (
     echo Creando entorno virtual...
     py -3.13 -m venv .venv 2>nul || py -3 -m venv .venv 2>nul || python -m venv .venv
